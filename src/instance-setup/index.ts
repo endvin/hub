@@ -18,7 +18,7 @@ import {
 } from "../organizations/provisioning.js";
 
 const BOOTSTRAP_ROW_ID = "default";
-const INTERACTIVE_ORGANIZATION_NAME = "Paseo Hub";
+const INTERACTIVE_ORGANIZATION_NAME = "ClawMuse Hub";
 
 /**
  * What makes "this database has no accounts" hold until the claim commits. `share row exclusive`

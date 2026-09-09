@@ -138,7 +138,7 @@ export function AppSetupEntry({
     <AuthLayout width="xl">
       <PageHeader
         title="Set up your apps"
-        description="Paseo Hub talks to GitHub, Slack, Discord, and Linear through apps you create and own. Set up the ones you want to use."
+        description="ClawMuse Hub talks to GitHub, Slack, Discord, and Linear through apps you create and own. Set up the ones you want to use."
         focusOnMount
       />
       <div className="grid min-w-0 gap-6">

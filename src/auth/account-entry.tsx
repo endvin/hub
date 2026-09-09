@@ -175,7 +175,10 @@ function accountEntryPresentation(
     };
   }
   if (mode === "signIn") {
-    return { title: "Sign in to Paseo Hub", description: "Your agent operations, in one place." };
+    return {
+      title: "Sign in to ClawMuse Hub",
+      description: "Your agent operations, in one place.",
+    };
   }
   return { title: "Create an account", description: "Get your agent operations in one place." };
 }
@@ -243,7 +246,7 @@ function SignedOutFooter({
   const message =
     registration === "invite_only"
       ? "Accounts are created by invitation. Ask an organization owner to invite you."
-      : "Paseo Hub isn't accepting new accounts.";
+      : "ClawMuse Hub isn't accepting new accounts.";
   return (
     <div className="grid gap-2 text-center text-sm text-muted-foreground">
       <p>{message}</p>

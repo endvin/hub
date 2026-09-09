@@ -55,7 +55,7 @@ const referenceTheme = `
 `;
 const referenceConfiguration = {
   url: "/api/openapi.json",
-  metaData: { title: "Paseo Hub Public API" },
+  metaData: { title: "ClawMuse Hub Public API" },
   theme: "default",
   layout: "modern",
   showSidebar: true,
@@ -82,7 +82,7 @@ const referenceConfiguration = {
 
 export function PublicApiReference() {
   return (
-    <main aria-label="Paseo Hub API reference" className="min-h-screen">
+    <main aria-label="ClawMuse Hub API reference" className="min-h-screen">
       <ApiReferenceReact configuration={referenceConfiguration} />
     </main>
   );

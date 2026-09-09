@@ -125,7 +125,7 @@ export const publicOpenApiDocument = new OpenApiGeneratorV31(registry.definition
   {
     openapi: "3.1.0",
     info: {
-      title: "Paseo Hub Public API",
+      title: "ClawMuse Hub Public API",
       version: "1.0.0",
       description:
         "Log in the CLI, list projects, validate and install configuration, dispatch manual runs, and enroll Paseo daemons.",

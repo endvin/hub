@@ -330,6 +330,13 @@
       "when": 1788615733084,
       "tag": "0046_jittery_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788936037845,
+      "tag": "0047_neat_argent",
+      "breakpoints": true
     }
   ]
 }

@@ -1,3 +1,5 @@
+import { bearer } from "better-auth/plugins";
+import { ClawMuseDevices } from "./clawmuse-devices.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
@@ -202,7 +204,11 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
         },
       },
     },
-    plugins: [paseoOrganizationPlugin(), tanstackStartCookies()],
+    plugins: [
+      paseoOrganizationPlugin(),
+      bearer({ requireSignature: true }),
+      tanstackStartCookies(),
+    ],
   });
   const sessions = {
     async read(headers: Headers): Promise<AccountSession | undefined> {
@@ -242,11 +248,18 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
       ? {}
       : { invitationMailer: options.invitationMailer }),
   });
+  const clawmuseDevices = new ClawMuseDevices(
+    options.database,
+    options.secret,
+    process.env["CLAWMUSE_RELAY_ENDPOINT"] ?? "agent-relay.ppb.cn:443",
+    (headers) => sessions.read(headers),
+  );
   const browserOrigin = new URL(options.baseURL).origin;
 
   return {
     handle(request) {
       const path = new URL(request.url).pathname;
+      if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
       if (path.startsWith("/api/auth/paseo/")) {
         const rejected = rejectCrossOriginCookieMutation(
           request,

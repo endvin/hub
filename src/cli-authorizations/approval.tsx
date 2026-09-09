@@ -164,10 +164,10 @@ function CodeEntry({ onCode }: { onCode: (code: string) => void }) {
     <Centered>
       <AuthCard
         titleId="cli-login-code-heading"
-        title="Log in the Paseo CLI"
+        title="Log in the ClawMuse CLI"
         description="Enter the code shown in your terminal."
       >
-        <form className="grid gap-6" onSubmit={submit} aria-label="Log in the Paseo CLI">
+        <form className="grid gap-6" onSubmit={submit} aria-label="Log in the ClawMuse CLI">
           <FormField
             kind="text"
             id="cli-login-code"

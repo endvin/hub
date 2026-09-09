@@ -797,6 +797,21 @@ export const users = pgTable("user", {
   isInstanceOperator: boolean("is_instance_operator").default(false).notNull(),
 });
 
+// ClawMuse account discovery does not grant organization-level automation access.
+export const clawmuseDevices = pgTable(
+  "clawmuse_devices",
+  {
+    serverId: text("server_id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    label: text().notNull(),
+    offer: text().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("clawmuse_devices_user_idx").on(table.userId)],
+);
+
 export const sessions = pgTable(
   "session",
   {
