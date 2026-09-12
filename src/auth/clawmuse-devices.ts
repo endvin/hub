@@ -39,7 +39,9 @@ export class ClawMuseDevices {
     if (!request.headers.get("authorization")?.startsWith("Bearer ")) {
       return this.reply({ error: "unauthorized" }, 401);
     }
-    const session = await this.readSession(request.headers);
+    const headers = new Headers(request.headers);
+    headers.delete("cookie");
+    const session = await this.readSession(headers);
     if (!session) return this.reply({ error: "unauthorized" }, 401);
     if (session.mustChangePassword) return this.reply({ error: "password_change_required" }, 403);
     const path = new URL(request.url).pathname;
