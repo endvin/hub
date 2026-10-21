@@ -1,0 +1,31 @@
+# CNB 云原生构建：在 CNB 上编译并推送镜像，服务器只拉取不编译（部署铁律 1）。
+#
+# 线上 agent-hub.ppb.cn 跑的是 codex/endtoai-branding 分支（Clawmuse 设备授权、schema 0047），
+# 不是上游 main。2026-10-21 起镜像从这里出：此前的镜像是在 sg-dokploy（C2 中招机）本机构建的，
+# 迁移时不再沿用。
+#
+# 产物：docker.cnb.cool/ppb/hub:${CNB_COMMIT_SHORT} 与 :latest
+codex/endtoai-branding:
+  push:
+    - runner:
+        # 走「云原生开发」配额（声明 vscode）；云原生构建配额已耗尽时不声明会在 Prepare 被拒。
+        cpus: 8
+      services:
+        - docker
+        - vscode
+      stages:
+        - name: quality gates
+          image: node:22-bookworm
+          script: |
+            set -eu
+            npm ci --no-audit --no-fund
+            npm run typecheck
+            npm run db:check
+
+        - name: build and push image
+          script: |
+            set -eu
+            IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+            docker build -t "${IMAGE}:${CNB_COMMIT_SHORT}" -t "${IMAGE}:latest" .
+            docker push "${IMAGE}:${CNB_COMMIT_SHORT}"
+            docker push "${IMAGE}:latest"
