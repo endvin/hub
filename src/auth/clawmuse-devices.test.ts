@@ -107,6 +107,40 @@ it("rejects injected relay endpoints and unsigned sessions", async () => {
   expect((await call("/clawmuse/devices", "fake")).status).toBe(401);
 });
 
+it("shares explicit renames and preserves them across stale device enrollment", async () => {
+  const phoneSession = await call("/sign-in/email", undefined, {
+    email: "first@example.test",
+    password: "test-password-123456",
+  });
+  expect(phoneSession.status).toBe(200);
+  const phoneToken = phoneSession.headers.get("set-auth-token")!;
+  await call("/clawmuse/devices", firstToken, device);
+  const rename = { serverId: device.offer.serverId, label: "  Office Mac  " };
+  expect((await call("/clawmuse/devices/rename", firstToken, rename)).status).toBe(200);
+  expect((await call("/clawmuse/devices", firstToken, device)).status).toBe(200);
+  const phoneDirectory = z
+    .object({ devices: z.array(z.object({ label: z.string(), offer: z.unknown() })) })
+    .parse(await (await call("/clawmuse/devices", phoneToken)).json());
+  expect(phoneDirectory.devices[0]?.label).toBe("Office Mac");
+  expect(phoneDirectory.devices[0]?.offer).toEqual(device.offer);
+
+  expect((await call("/clawmuse/devices/rename", secondToken, rename)).status).toBe(404);
+  expect(
+    (await call("/clawmuse/devices/rename", firstToken, { ...rename, serverId: "srv_missing" }))
+      .status,
+  ).toBe(404);
+  for (const label of [" ", "x".repeat(101)]) {
+    expect((await call("/clawmuse/devices/rename", firstToken, { ...rename, label })).status).toBe(
+      400,
+    );
+  }
+  const stored = await runtime.query<{ label: string }>(
+    "SELECT label FROM clawmuse_devices WHERE server_id = $1",
+    [device.offer.serverId],
+  );
+  expect(stored.rows[0]?.label).toBe("Office Mac");
+});
+
 it("revokes the account session on logout", async () => {
   expect((await call("/sign-out", secondToken, {})).status).toBe(200);
   expect((await call("/clawmuse/devices", secondToken)).status).toBe(401);

@@ -74,6 +74,23 @@ export class ClawMuseDevices {
     } catch {
       return this.reply({ error: "invalid_request" }, 400);
     }
+    if (path === "/api/auth/clawmuse/devices/rename") {
+      const input = z
+        .object({
+          serverId: deviceSchema.shape.offer.shape.serverId,
+          label: deviceSchema.shape.label,
+        })
+        .strict()
+        .safeParse(body);
+      if (!input.success) return this.reply({ error: "invalid_request" }, 400);
+      const result = await this.database.query(
+        "UPDATE clawmuse_devices SET label = $1, updated_at = now() WHERE user_id = $2 AND server_id = $3 RETURNING server_id",
+        [input.data.label, session.userId, input.data.serverId],
+      );
+      return result.rowCount
+        ? this.reply({ ok: true })
+        : this.reply({ error: "device_not_found" }, 404);
+    }
     if (path === "/api/auth/clawmuse/devices/remove") {
       const input = z
         .object({ serverId: z.string().max(110) })
@@ -110,7 +127,7 @@ export class ClawMuseDevices {
         return this.reply({ error: "device_limit" }, 409);
       const result = await tx.query(
         `INSERT INTO clawmuse_devices (server_id, user_id, label, offer) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (server_id) DO UPDATE SET label = EXCLUDED.label, offer = EXCLUDED.offer, updated_at = now()
+         ON CONFLICT (server_id) DO UPDATE SET offer = EXCLUDED.offer, updated_at = now()
          WHERE clawmuse_devices.user_id = EXCLUDED.user_id RETURNING server_id`,
         [
           offer.serverId,
