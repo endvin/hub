@@ -2,7 +2,7 @@ import { z } from "zod";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { embeddedDatabaseRuntime, type DatabaseRuntime } from "../db/runtime/index.js";
 import { createDatabase } from "../db/pg.js";
 import { composeEntitlements } from "./entitlements.js";
@@ -36,6 +36,10 @@ const call = (path: string, token?: string, body?: unknown) =>
   );
 
 beforeAll(async () => {
+  vi.stubEnv(
+    "CLAWMUSE_RELAY_ENDPOINTS",
+    "agent-relay.clawmuse.com:443, agent-relay.ppb.cn:443,agent-relay-cn.clawmuse.com:443",
+  );
   directory = await mkdtemp(join(tmpdir(), "clawmuse-account-test-"));
   const bundle = await embeddedDatabaseRuntime(directory);
   runtime = bundle.runtime;
@@ -66,6 +70,7 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
+  vi.unstubAllEnvs();
   await auth?.close();
   await runtime?.close();
   if (directory) await rm(directory, { recursive: true, force: true });
@@ -106,6 +111,41 @@ it("rejects injected relay endpoints and unsigned sessions", async () => {
   ).toBe(400);
   expect((await call("/clawmuse/devices", "fake")).status).toBe(401);
 });
+
+it.each(["agent-relay.clawmuse.com:443", "agent-relay-cn.clawmuse.com:443"])(
+  "accepts %s and preserves the original endpoint in discovery",
+  async (endpoint) => {
+    const modern = {
+      ...device,
+      offer: {
+        ...device.offer,
+        serverId: "srv_clawmuse_new_domain",
+        relay: { endpoint, useTls: true },
+      },
+    };
+    expect((await call("/clawmuse/devices", firstToken, modern)).status).toBe(200);
+    const result = z
+      .object({ devices: z.array(z.object({ serverId: z.string(), offer: z.unknown() })) })
+      .parse(await (await call("/clawmuse/devices", firstToken)).json());
+    expect(result.devices.find((item) => item.serverId === modern.offer.serverId)?.offer).toEqual(
+      modern.offer,
+    );
+    await call("/clawmuse/devices/remove", firstToken, { serverId: modern.offer.serverId });
+    for (const rejectedEndpoint of [
+      "agent-relay.clawmuse.com.evil.test:443",
+      "agent-relay.clawmuse.com:80",
+    ]) {
+      expect(
+        (
+          await call("/clawmuse/devices", firstToken, {
+            ...modern,
+            offer: { ...modern.offer, relay: { endpoint: rejectedEndpoint, useTls: true } },
+          })
+        ).status,
+      ).toBe(400);
+    }
+  },
+);
 
 it("shares explicit renames and preserves them across stale device enrollment", async () => {
   const phoneSession = await call("/sign-in/email", undefined, {

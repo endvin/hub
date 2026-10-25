@@ -251,7 +251,14 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
   const clawmuseDevices = new ClawMuseDevices(
     options.database,
     options.secret,
-    process.env["CLAWMUSE_RELAY_ENDPOINT"] ?? "agent-relay.ppb.cn:443",
+    (
+      process.env["CLAWMUSE_RELAY_ENDPOINTS"] ??
+      process.env["CLAWMUSE_RELAY_ENDPOINT"] ??
+      "agent-relay.clawmuse.com:443,agent-relay.ppb.cn:443"
+    )
+      .split(",")
+      .map((endpoint) => endpoint.trim())
+      .filter(Boolean),
     (headers) => sessions.read(headers),
   );
   const browserOrigin = new URL(options.baseURL).origin;

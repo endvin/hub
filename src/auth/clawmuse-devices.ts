@@ -23,14 +23,16 @@ const deviceSchema = z
  */
 export class ClawMuseDevices {
   private readonly key: Buffer;
+  private readonly relayEndpoints: ReadonlySet<string>;
 
   constructor(
     private readonly database: DatabaseRuntime,
     secret: string,
-    private readonly relayEndpoint: string,
+    relayEndpoints: readonly string[],
     private readonly readSession: (headers: Headers) => Promise<AccountSession | undefined>,
   ) {
     this.key = Buffer.from(hkdfSync("sha256", secret, "", "clawmuse-device-directory-v1", 32));
+    this.relayEndpoints = new Set(relayEndpoints);
   }
 
   async handle(request: Request): Promise<Response> {
@@ -105,7 +107,7 @@ export class ClawMuseDevices {
     }
     if (path !== "/api/auth/clawmuse/devices") return this.reply({ error: "not_found" }, 404);
     const input = deviceSchema.safeParse(body);
-    if (!input.success || input.data.offer.relay.endpoint !== this.relayEndpoint) {
+    if (!input.success || !this.relayEndpoints.has(input.data.offer.relay.endpoint)) {
       return this.reply({ error: "invalid_device" }, 400);
     }
     const { label, offer } = input.data;
