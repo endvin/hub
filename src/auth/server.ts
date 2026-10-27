@@ -1,3 +1,4 @@
+import { APIError } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 import { clawmuseAppOrigins, handleClawMuseAppRequest } from "./clawmuse-app-origin.js";
 import { ClawMuseDevices } from "./clawmuse-devices.js";
@@ -189,6 +190,70 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
           },
         }),
     user: {
+      deleteUser: {
+        enabled: true,
+        beforeDelete: async (user, request) => {
+          // Keep future internal API callers and normalized callback paths behind the
+          // same app-only password-verifying route, rather than fresh-session deletion.
+          if (
+            !request ||
+            request.method !== "POST" ||
+            new URL(request.url).pathname !== "/api/auth/delete-user" ||
+            !request.headers.get("authorization")?.startsWith("Bearer ")
+          ) {
+            throw new APIError("FORBIDDEN", {
+              message: "Use the password-confirmed account deletion flow.",
+            });
+          }
+          // Shared Hub resources need an ownership transfer before the identity disappears.
+          const ownership = await options.database.query(
+            `SELECT 1 FROM member WHERE user_id = $1 AND role = 'owner'
+             UNION ALL SELECT 1 FROM instance_bootstrap WHERE owner_user_id = $1
+             UNION ALL SELECT 1 FROM "user" WHERE id = $1 AND is_instance_operator = true LIMIT 1`,
+            [user.id],
+          );
+          if (ownership.rows.length > 0) {
+            throw new APIError("CONFLICT", {
+              message: "Transfer Hub ownership before deleting this account.",
+              code: "ACCOUNT_OWNS_RESOURCES",
+            });
+          }
+          const url = process.env["CLAWMUSE_STATUS_ACCOUNT_DELETION_URL"];
+          const secret = process.env["ACCOUNT_DELETION_SECRET"];
+          if (!url || !secret || secret.length < 32) {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              message: "Account deletion is temporarily unavailable.",
+              code: "ACCOUNT_DELETION_UNAVAILABLE",
+            });
+          }
+          const endpoint = new URL(url);
+          if (
+            endpoint.protocol !== "https:" &&
+            !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname)
+          ) {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              message: "Account deletion is temporarily unavailable.",
+            });
+          }
+          try {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+              body: JSON.stringify({ userId: user.id }),
+              redirect: "error",
+              signal: AbortSignal.timeout(10000),
+            });
+            const result: unknown = await response.json();
+            if (!response.ok || !z.object({ deleted: z.literal(true) }).safeParse(result).success)
+              throw new Error("deletion_failed");
+          } catch {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              message: "Account deletion could not finish. Retry; your account is still active.",
+              code: "ACCOUNT_DELETION_UNAVAILABLE",
+            });
+          }
+        },
+      },
       additionalFields: {
         mustChangePassword: {
           type: "boolean",
@@ -268,6 +333,31 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
   const appOrigins = clawmuseAppOrigins(process.env["CLAWMUSE_APP_ORIGINS"]);
   const route = (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
+    if (path === "/api/auth/delete-user") {
+      // Password reauthentication is mandatory even for a fresh session.
+      if (
+        request.method !== "POST" ||
+        !request.headers.get("authorization")?.startsWith("Bearer ")
+      ) {
+        return Promise.resolve(Response.json({ error: "unauthorized" }, { status: 401 }));
+      }
+      return request
+        .clone()
+        .json()
+        .catch(() => null)
+        .then((body: unknown) => {
+          const input = z
+            .object({ password: z.string().min(1).max(1024) })
+            .strict()
+            .safeParse(body);
+          if (!input.success) return Response.json({ error: "password_required" }, { status: 400 });
+          const headers = new Headers(request.headers);
+          headers.delete("cookie");
+          return auth.handler(
+            new Request(request.url, { method: "POST", headers, body: JSON.stringify(input.data) }),
+          );
+        });
+    }
     if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
     if (path.startsWith("/api/auth/paseo/")) {
       const rejected = rejectCrossOriginCookieMutation(

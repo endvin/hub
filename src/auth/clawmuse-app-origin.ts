@@ -3,6 +3,7 @@ const ACCOUNT_PATHS = new Set([
   "/api/auth/sign-in/email",
   "/api/auth/sign-up/email",
   "/api/auth/sign-out",
+  "/api/auth/delete-user",
   "/api/auth/clawmuse/devices",
   "/api/auth/clawmuse/devices/rename",
   "/api/auth/clawmuse/devices/remove",
