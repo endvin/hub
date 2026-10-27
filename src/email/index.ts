@@ -1,4 +1,5 @@
 import { createResendEmailDelivery, readResendConfig } from "./internal/resend.js";
+import { createSmtpEmailDelivery, readSmtpConfig } from "./internal/smtp.js";
 
 export interface EmailMessage {
   to: string;
@@ -16,6 +17,8 @@ export interface EmailDelivery {
 export function composeEmailDelivery(
   environment: Record<string, string | undefined> = process.env,
 ): EmailDelivery | undefined {
-  const config = readResendConfig(environment);
-  return config === undefined ? undefined : createResendEmailDelivery(config);
+  const resend = readResendConfig(environment);
+  if (resend !== undefined) return createResendEmailDelivery(resend);
+  const smtp = readSmtpConfig(environment);
+  return smtp === undefined ? undefined : createSmtpEmailDelivery(smtp);
 }
