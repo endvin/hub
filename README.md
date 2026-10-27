@@ -91,8 +91,12 @@ Hub generates and stores its authentication secret in the database. Advanced dep
 Billing is optional: leave `STRIPE_SECRET_KEY` unset and Hub runs with no billing surface at all. See [docs/billing.md](docs/billing.md).
 
 Email delivery is optional too: set `RESEND_API_KEY` and `RESEND_FROM` to email organization
-invitations, signup verification links, and password-reset links through Resend. Configured
-instances require new password accounts to verify their email before sign-in. Without delivery
+invitations, signup verification links, and password-reset links through Resend, or set
+`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_FROM` (`SMTP_PORT` defaults to 587 with
+STARTTLS) for an SMTP relay such as OCI Email Delivery. Resend wins when both are set. Configured
+instances require password accounts to verify their email before sign-in; an unverified sign-in
+attempt sends a fresh link. Accounts created before delivery was configured stay unverified, so
+mark them verified before enabling delivery on an existing instance. Without delivery
 configuration, managers retain the existing copy-and-share invitation workflow.
 
 Then start Hub and PostgreSQL:

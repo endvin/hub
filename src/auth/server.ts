@@ -182,6 +182,8 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
       : {
           emailVerification: {
             autoSignInAfterVerification: true,
+            // Signing in unverified resends the link, so a lost email never strands the account.
+            sendOnSignIn: true,
             sendVerificationEmail: (email: Parameters<AccountMailer["sendVerificationEmail"]>[0]) =>
               accountMailer.sendVerificationEmail(email),
           },
