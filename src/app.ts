@@ -1,3 +1,4 @@
+import { createScheduleSource, createScheduleProvider } from "./triggers/schedule/index.js";
 import { createExecutionCapabilityServer } from "./execution-capabilities/server.js";
 import { OutputExecutorRegistry } from "./execution-capabilities/outputs.js";
 import {
@@ -75,7 +76,7 @@ export interface HubRuntime {
   daemonModule: DaemonModule | null;
   connectionForDaemon(daemonId: string): import("./daemons/index.js").DaemonConnection | undefined;
   resourceCounts(): {
-    recoveredExecutionSubscriptions: number;
+    executionSubscriptions: number;
   };
   processWorkflowOutbox(): Promise<void>;
   handleUpgrade: ReturnType<typeof createDaemonUpgradeHandler> | null;
@@ -141,9 +142,12 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
             ...(attachments === undefined ? {} : { attachments }),
           }),
         );
-  const providers = [manualProvider, ...configuredProviders, ...(options.providers ?? [])].filter(
-    (provider): provider is TriggerProvider => provider !== undefined,
-  );
+  const providers = [
+    createScheduleProvider(),
+    manualProvider,
+    ...configuredProviders,
+    ...(options.providers ?? []),
+  ].filter((provider): provider is TriggerProvider => provider !== undefined);
   const outputRegistry = options.outputRegistry ?? new OutputExecutorRegistry();
   const daemonModule = createAppDaemonModule(options, daemons, providers, outputRegistry);
   const capabilityServer = createAppExecutionCapabilityServer(
@@ -170,6 +174,7 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
           options.publicBaseUrl,
         );
 
+  const scheduleSource = appScheduleSource(options.database);
   const manualSource =
     options.database === null ? undefined : createManualTriggerSource(options.database);
   const durableDispatchHandler =
@@ -178,6 +183,8 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
       : (intent: Parameters<DaemonModule["lifecycle"]["handoffLaunchMachineIntent"]>[0]) =>
           daemonModule.lifecycle.handoffLaunchMachineIntent(intent);
   const dispatcherOptions = {
+    canDispatchToDaemon: (daemonId: string) =>
+      (options.daemonConnectionForId?.(daemonId) ?? daemons?.connection(daemonId)) !== undefined,
     database: options.database,
     entitlements: options.entitlements,
     providers,
@@ -226,19 +233,23 @@ export function createHubApplication(options: HubRuntimeOptions): HubApplication
     connectionForDaemon: (daemonId) =>
       options.daemonConnectionForId?.(daemonId) ?? daemons?.connection(daemonId),
     resourceCounts: () => ({
-      recoveredExecutionSubscriptions:
-        daemonModule?.lifecycle.activeRecoveryObservationCount() ?? 0,
+      executionSubscriptions: daemonModule?.lifecycle.activeExecutionObservationCount() ?? 0,
     }),
     processWorkflowOutbox: () => workflowEngine.processAvailable(),
     handleUpgrade:
       options.database === null ? null : createDaemonUpgradeHandler(options.database, daemons!),
     async start(sources = []) {
+      await options.executionAuthority?.recover();
       await Promise.all([
         daemonModule?.lifecycle.recoverAgentExecutionDeadlines(),
         daemonModule?.lifecycle.recoverPendingHubActions(),
       ]);
       workflowEngine.start();
-      activeSources = [...(manualSource === undefined ? [] : [manualSource]), ...sources];
+      activeSources = [
+        ...(manualSource === undefined ? [] : [manualSource]),
+        ...(scheduleSource === undefined ? [] : [scheduleSource]),
+        ...sources,
+      ];
       await Promise.all(activeSources.map(async (source) => source.start(workflowDispatcher)));
     },
     async stop() {
@@ -464,4 +475,8 @@ function createAppDaemonModule(
         }
       : {}),
   });
+}
+
+function appScheduleSource(database: Database | null): TriggerSource | undefined {
+  return database === null ? undefined : createScheduleSource(database.schedules);
 }

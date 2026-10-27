@@ -344,6 +344,13 @@
       "when": 1793092104303,
       "tag": "0048_clawmuse_verify_existing_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1793111579822,
+      "tag": "0049_unified_schedules_authority",
+      "breakpoints": true
     }
   ]
 }

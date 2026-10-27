@@ -8,6 +8,8 @@ pre-commit:
       run: npm run format:check:files -- {staged_files}
     - name: lint
       glob: "*.{js,jsx,ts,tsx}"
-      run: npm run lint -- {staged_files}
+      # The script selects separate Node and React source sets and tsconfigs.
+      # Appending e2e files checks them with the React tsconfig instead of tsconfig.e2e.json.
+      run: npm run lint
     - name: typecheck
       run: npm run typecheck

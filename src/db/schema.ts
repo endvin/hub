@@ -48,7 +48,9 @@ export const providerEventReceipts = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    provider: text().$type<(typeof CONNECTION_PROVIDERS)[number] | "manual">().notNull(),
+    provider: text()
+      .$type<(typeof CONNECTION_PROVIDERS)[number] | "manual" | "schedule">()
+      .notNull(),
     connectionId: uuid("connection_id"),
     resourceId: text("resource_id"),
     deliveryId: text("delivery_id").notNull(),
@@ -86,7 +88,7 @@ export const providerEventReceipts = pgTable(
     ),
     check(
       "provider_event_receipts_provider_check",
-      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual')`,
+      sql`${table.provider} in ('github', 'slack', 'discord', 'linear', 'manual', 'schedule')`,
     ),
   ],
 );
@@ -1435,3 +1437,36 @@ export const organizationBillingCustomers = pgTable("organization_billing_custom
   stripeCustomerId: text("stripe_customer_id").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/** Scheduling owns recurrence and one active run across revisions and disable/re-enable. */
+export const triggerSchedules = pgTable(
+  "trigger_schedules",
+  {
+    triggerId: uuid("trigger_id")
+      .primaryKey()
+      .references(() => organizationTriggers.id, { onDelete: "cascade" }),
+    recurrence: jsonb(),
+    nextAt: timestamp("next_at", { withTimezone: true }),
+    activeRunId: uuid("active_run_id").references(() => triggerRuns.id, { onDelete: "set null" }),
+  },
+  (table) => [index("trigger_schedules_due_idx").on(table.nextAt)],
+);
+
+export const executionAuthorities = pgTable("execution_authorities", {
+  executionId: uuid("execution_id")
+    .primaryKey()
+    .references(() => agentExecutions.id, { onDelete: "cascade" }),
+  data: jsonb("data").notNull(),
+});
+
+export const executionCredentialLeases = pgTable(
+  "execution_credential_leases",
+  {
+    id: uuid("id").primaryKey(),
+    executionId: uuid("execution_id")
+      .notNull()
+      .references(() => agentExecutions.id, { onDelete: "cascade" }),
+    data: jsonb("data").notNull(),
+  },
+  (table) => [index("execution_credential_leases_execution_idx").on(table.executionId)],
+);

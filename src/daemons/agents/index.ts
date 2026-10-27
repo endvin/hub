@@ -5,6 +5,7 @@ import {
   HubExecutionAgentSnapshotSchema,
 } from "../../hub/protocol.js";
 import type { DaemonCreateAgentOptions, DaemonAgentStreamEvent } from "../protocol.js";
+import { DaemonResponseLostError } from "../protocol.js";
 
 const SnapshotSchema = z.object({
   id: z.string(),
@@ -17,10 +18,14 @@ export type AgentEvent =
   | { type: "agent_update"; agent: AgentSnapshot; timestamp: string }
   | { type: "agent_stream"; agentId: string; event: DaemonAgentStreamEvent; timestamp: string };
 export interface AgentConnection {
-  create(key: string, options: DaemonCreateAgentOptions): Promise<AgentSnapshot>;
+  create(
+    key: string,
+    options: DaemonCreateAgentOptions,
+    timeoutMs?: number,
+  ): Promise<AgentSnapshot>;
   get(agentId: string): Promise<AgentSnapshot>;
-  send(agentId: string, messageId: string, text: string): Promise<void>;
-  restore(workspaceId: string): Promise<boolean>;
+  send(agentId: string, messageId: string, text: string, timeoutMs?: number): Promise<void>;
+  restore(workspaceId: string, timeoutMs?: number): Promise<boolean>;
   control(agentId: string, workspaceId: string, action: "interrupt" | "archive"): Promise<void>;
   watch(agentId: string, listener: (event: AgentEvent) => void): Promise<() => void>;
 }
@@ -47,7 +52,10 @@ export class DaemonAgents implements AgentConnection {
   >();
   private readonly listeners = new Map<string, Set<(event: AgentEvent) => void>>();
   private observing = false;
-  constructor(private readonly sendFrame: (frame: string) => void) {}
+  constructor(
+    private readonly sendFrame: (frame: string) => void,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   receive(value: unknown): boolean {
     const envelope = EnvelopeSchema.safeParse(value);
@@ -73,7 +81,7 @@ export class DaemonAgents implements AgentConnection {
     if (type === "agent_update" && payload["kind"] === "upsert") {
       const agent = SnapshotSchema.safeParse(payload["agent"]);
       if (agent.success)
-        this.emit(agent.data.id, { type, agent: agent.data, timestamp: new Date().toISOString() });
+        this.emit(agent.data.id, { type, agent: agent.data, timestamp: this.now().toISOString() });
       return true;
     }
     if (type === "agent_stream") {
@@ -84,35 +92,47 @@ export class DaemonAgents implements AgentConnection {
           event: HubExecutionAgentStreamEventSchema,
         })
         .safeParse(payload);
-      if (stream.success) this.emit(stream.data.agentId, { type, ...stream.data });
+      if (stream.success)
+        this.emit(stream.data.agentId, {
+          type,
+          ...stream.data,
+          timestamp: this.now().toISOString(),
+        });
       return true;
     }
     return false;
   }
 
   close(): void {
-    for (const pending of this.pending.values()) pending.reject(new Error("daemon_disconnected"));
+    for (const pending of this.pending.values()) pending.reject(new DaemonResponseLostError());
     this.pending.clear();
     this.listeners.clear();
   }
 
-  async create(key: string, options: DaemonCreateAgentOptions): Promise<AgentSnapshot> {
-    const response = await this.request({
-      type: "create_agent_request",
-      idempotencyKey: key,
-      config: {
-        provider: options.provider,
-        cwd: options.cwd,
-        model: options.model,
-        modeId: options.mode,
-        thinkingOptionId: options.thinkingOptionId,
-        providerOptions: options.providerOptions,
-        mcpServers: options.mcpServers,
-        toolPolicy: options.toolPolicy,
+  async create(
+    key: string,
+    options: DaemonCreateAgentOptions,
+    timeoutMs?: number,
+  ): Promise<AgentSnapshot> {
+    const response = await this.request(
+      {
+        type: "create_agent_request",
+        idempotencyKey: key,
+        config: {
+          provider: options.provider,
+          cwd: options.cwd,
+          model: options.model,
+          modeId: options.mode,
+          thinkingOptionId: options.thinkingOptionId,
+          providerOptions: options.providerOptions,
+          mcpServers: options.mcpServers,
+          toolPolicy: options.toolPolicy,
+        },
+        env: options.env,
+        worktree: options.worktree,
       },
-      env: options.env,
-      worktree: options.worktree,
-    });
+      timeoutMs,
+    );
     return SnapshotSchema.parse(response["agent"]);
   }
   async get(agentId: string): Promise<AgentSnapshot> {
@@ -123,16 +143,19 @@ export class DaemonAgents implements AgentConnection {
       );
     return SnapshotSchema.parse(response["agent"]);
   }
-  async send(agentId: string, messageId: string, text: string): Promise<void> {
-    await this.request({
-      type: "send_agent_message_request",
-      agentId,
-      messageId,
-      text,
-      activeTurnBehavior: "steer",
-    });
+  async send(agentId: string, messageId: string, text: string, timeoutMs?: number): Promise<void> {
+    await this.request(
+      {
+        type: "send_agent_message_request",
+        agentId,
+        messageId,
+        text,
+        activeTurnBehavior: "steer",
+      },
+      timeoutMs,
+    );
   }
-  async restore(workspaceId: string): Promise<boolean> {
+  async restore(workspaceId: string, timeoutMs?: number): Promise<boolean> {
     const result = await this.request({ type: "workspace.recovery.inspect.request", workspaceId });
     const state = z
       .object({ kind: z.string(), reason: z.string().optional() })
@@ -142,7 +165,7 @@ export class DaemonAgents implements AgentConnection {
       throw new DaemonAgentError(
         "Workspace cannot be restored; inspect its recovery state in Paseo",
       );
-    await this.request({ type: "workspace.recovery.restore.request", workspaceId });
+    await this.request({ type: "workspace.recovery.restore.request", workspaceId }, timeoutMs);
     return true;
   }
   async control(
@@ -184,15 +207,17 @@ export class DaemonAgents implements AgentConnection {
   private emit(agentId: string, event: AgentEvent): void {
     for (const listener of this.listeners.get(agentId) ?? []) listener(event);
   }
-  private async request(message: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!this.supported)
-      throw new DaemonAgentError("Update the Paseo daemon to use agent continuation");
+  private async request(
+    message: Record<string, unknown>,
+    timeoutMs = 30_000,
+  ): Promise<Record<string, unknown>> {
+    if (!this.supported) throw new DaemonAgentError("Update the Paseo daemon to run Hub agents");
     const requestId = randomUUID();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
         this.pending.set(requestId, { resolve, reject });
-        timeout = setTimeout(() => reject(new Error("Daemon request timed out")), 30_000);
+        timeout = setTimeout(() => reject(new DaemonResponseLostError()), timeoutMs);
         this.sendFrame(JSON.stringify({ type: "session", message: { ...message, requestId } }));
       });
       const parsed = ResultSchema.parse(result);
