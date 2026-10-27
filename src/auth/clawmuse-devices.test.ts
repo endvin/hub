@@ -185,3 +185,34 @@ it("revokes the account session on logout", async () => {
   expect((await call("/sign-out", secondToken, {})).status).toBe(200);
   expect((await call("/clawmuse/devices", secondToken)).status).toBe(401);
 });
+
+it("stores protected device identities without admitting pairing invitations into the account directory", async () => {
+  const protectedDevice = {
+    ...device,
+    offer: {
+      ...device.offer,
+      serverId: "srv_clawmuse_protected",
+      requiresAuthorization: true,
+      minimumSecurityMode: "protected",
+    },
+  };
+  expect((await call("/clawmuse/devices", firstToken, protectedDevice)).status).toBe(200);
+  const directoryResult = z
+    .object({ devices: z.array(z.object({ serverId: z.string(), offer: z.unknown() })) })
+    .parse(await (await call("/clawmuse/devices", firstToken)).json());
+  expect(
+    directoryResult.devices.find((entry) => entry.serverId === protectedDevice.offer.serverId)
+      ?.offer,
+  ).toEqual(protectedDevice.offer);
+  expect(
+    (
+      await call("/clawmuse/devices", firstToken, {
+        ...protectedDevice,
+        offer: {
+          ...protectedDevice.offer,
+          pairing: { token: "secret", expiresAt: "2026-10-26T00:10:00Z" },
+        },
+      })
+    ).status,
+  ).toBe(400);
+});

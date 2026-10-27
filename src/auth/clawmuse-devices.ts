@@ -9,6 +9,8 @@ const deviceSchema = z
     offer: z
       .object({
         v: z.literal(2),
+        requiresAuthorization: z.boolean().optional(),
+        minimumSecurityMode: z.literal("protected").optional(),
         serverId: z.string().regex(/^srv_[A-Za-z0-9_-]{1,100}$/),
         daemonPublicKeyB64: z.string().regex(/^[A-Za-z0-9+/]{43}=$/),
         relay: z.object({ endpoint: z.string().min(1).max(255), useTls: z.literal(true) }).strict(),
