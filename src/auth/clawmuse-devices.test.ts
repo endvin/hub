@@ -185,3 +185,74 @@ it("revokes the account session on logout", async () => {
   expect((await call("/sign-out", secondToken, {})).status).toBe(200);
   expect((await call("/clawmuse/devices", secondToken)).status).toBe(401);
 });
+
+it("serves the browser client from the app origin with bearer sessions only", async () => {
+  const app = "https://app.clawmuse.com";
+  const browser = (
+    path: string,
+    origin: string,
+    init: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  ) =>
+    auth.handle(
+      new Request(base + path, {
+        ...init,
+        headers: {
+          origin,
+          "sec-fetch-site": "same-site",
+          "sec-fetch-mode": "cors",
+          ...init.headers,
+        },
+      }),
+    );
+  const credentials = JSON.stringify({
+    email: "first@example.test",
+    password: "test-password-123456",
+  });
+  const json = { "content-type": "application/json" };
+
+  const preflight = await browser("/sign-in/email", app, { method: "OPTIONS" });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get("access-control-allow-origin")).toBe(app);
+  expect(preflight.headers.get("access-control-allow-headers")).toContain("authorization");
+  const foreign = await browser("/sign-in/email", "https://evil.test", {
+    method: "POST",
+    headers: json,
+    body: credentials,
+  });
+  // Better Auth skips its own origin check under NODE_ENV=test; only the CORS grant is asserted.
+  expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+
+  const signIn = await browser("/sign-in/email", app, {
+    method: "POST",
+    headers: json,
+    body: credentials,
+  });
+  expect(signIn.status).toBe(200);
+  expect(signIn.headers.get("access-control-allow-origin")).toBe(app);
+  expect(signIn.headers.get("access-control-expose-headers")).toBe("set-auth-token");
+  expect(signIn.headers.get("set-cookie")).toBeNull();
+  const token = signIn.headers.get("set-auth-token")!;
+  expect(token).toBeTruthy();
+  const devices = await browser("/clawmuse/devices", app, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  expect(devices.status).toBe(200);
+  expect(devices.headers.get("access-control-allow-origin")).toBe(app);
+
+  const cookieSession = await call("/sign-in/email", undefined, JSON.parse(credentials));
+  const cookie = cookieSession.headers.get("set-cookie")!.split(";")[0]!;
+  expect(
+    (await browser("/get-session", app, { headers: { cookie } }).then((r) => r.json())) as unknown,
+  ).toBeNull();
+
+  expect(
+    (
+      await browser("/sign-out", app, {
+        method: "POST",
+        headers: { ...json, authorization: `Bearer ${token}` },
+        body: "{}",
+      })
+    ).status,
+  ).toBe(200);
+  expect((await call("/clawmuse/devices", token)).status).toBe(401);
+});

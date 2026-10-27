@@ -1,4 +1,5 @@
 import { bearer } from "better-auth/plugins";
+import { clawmuseAppOrigins, handleClawMuseAppRequest } from "./clawmuse-app-origin.js";
 import { ClawMuseDevices } from "./clawmuse-devices.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -262,42 +263,45 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
     (headers) => sessions.read(headers),
   );
   const browserOrigin = new URL(options.baseURL).origin;
+  const appOrigins = clawmuseAppOrigins(process.env["CLAWMUSE_APP_ORIGINS"]);
+  const route = (request: Request): Promise<Response> => {
+    const path = new URL(request.url).pathname;
+    if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
+    if (path.startsWith("/api/auth/paseo/")) {
+      const rejected = rejectCrossOriginCookieMutation(
+        request,
+        requestBrowserOrigin(request, browserOrigin),
+      );
+      if (rejected !== undefined) return Promise.resolve(rejected);
+      return access.handle(request);
+    }
+    if (path === "/api/auth/sign-up/email") {
+      return registration
+        .handleSignUp(request, (admittedRequest) => auth.handler(admittedRequest))
+        .catch((error: unknown) => {
+          if (error instanceof RegistrationAdmissionError) {
+            return Response.json({ error: "registration_closed" }, { status: 403 });
+          }
+          throw error;
+        });
+    }
+    if (path === "/api/auth/change-password") {
+      const rejected = rejectCrossOriginCookieMutation(
+        request,
+        requestBrowserOrigin(request, browserOrigin),
+      );
+      if (rejected !== undefined) return Promise.resolve(rejected);
+      return changePassword(request);
+    }
+    if (!RAW_PRODUCT_PATHS.has(path) && !path.startsWith("/api/auth/reset-password/")) {
+      return Promise.resolve(Response.json({ error: "not_found" }, { status: 404 }));
+    }
+    return auth.handler(request);
+  };
 
   return {
-    handle(request) {
-      const path = new URL(request.url).pathname;
-      if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
-      if (path.startsWith("/api/auth/paseo/")) {
-        const rejected = rejectCrossOriginCookieMutation(
-          request,
-          requestBrowserOrigin(request, browserOrigin),
-        );
-        if (rejected !== undefined) return Promise.resolve(rejected);
-        return access.handle(request);
-      }
-      if (path === "/api/auth/sign-up/email") {
-        return registration
-          .handleSignUp(request, (admittedRequest) => auth.handler(admittedRequest))
-          .catch((error: unknown) => {
-            if (error instanceof RegistrationAdmissionError) {
-              return Response.json({ error: "registration_closed" }, { status: 403 });
-            }
-            throw error;
-          });
-      }
-      if (path === "/api/auth/change-password") {
-        const rejected = rejectCrossOriginCookieMutation(
-          request,
-          requestBrowserOrigin(request, browserOrigin),
-        );
-        if (rejected !== undefined) return Promise.resolve(rejected);
-        return changePassword(request);
-      }
-      if (!RAW_PRODUCT_PATHS.has(path) && !path.startsWith("/api/auth/reset-password/")) {
-        return Promise.resolve(Response.json({ error: "not_found" }, { status: 404 }));
-      }
-      return auth.handler(request);
-    },
+    handle: (request) =>
+      handleClawMuseAppRequest(request, appOrigins, browserOrigin, route) ?? route(request),
     browserAccount: (request) => {
       const path = new URL(request.url).pathname;
       if (path === "/api/auth/change-password") {
