@@ -32,6 +32,7 @@ export class ClawMuseDevices {
     secret: string,
     relayEndpoints: readonly string[],
     private readonly readSession: (headers: Headers) => Promise<AccountSession | undefined>,
+    private readonly cloudEnabled = false,
   ) {
     this.key = Buffer.from(hkdfSync("sha256", secret, "", "clawmuse-device-directory-v1", 32));
     this.relayEndpoints = new Set(relayEndpoints);
@@ -61,6 +62,7 @@ export class ClawMuseDevices {
       );
       return this.reply({
         account: { id: session.userId, name: session.name, email: session.email },
+        ...(this.cloudEnabled ? { cloud: { enabled: true } } : {}),
         devices: result.rows.map((row) => ({
           serverId: row.server_id,
           label: row.label,

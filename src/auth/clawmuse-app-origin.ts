@@ -8,6 +8,9 @@ const ACCOUNT_PATHS = new Set([
   "/api/auth/clawmuse/devices",
   "/api/auth/clawmuse/devices/rename",
   "/api/auth/clawmuse/devices/remove",
+  "/api/auth/clawmuse/cloud",
+  "/api/auth/clawmuse/cloud/start",
+  "/api/auth/clawmuse/cloud/pause",
 ]);
 
 export function clawmuseAppOrigins(value: string | undefined): Set<string> {

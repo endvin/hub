@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash, createHmac } from "node:crypto";
 import { z } from "zod";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +37,37 @@ const call = (path: string, token?: string, body?: unknown) =>
     }),
   );
 
+const cloudSecret = "cloud-secret-123456789012345678901234567890";
+const cloudRequests: { owner: string; path: string }[] = [];
+let cloudCleanupOk = true;
+const cloudServer = createServer((request, response) => {
+  const owner = String(request.headers["x-clawmuse-owner"]);
+  const time = String(request.headers["x-clawmuse-timestamp"]);
+  const path = request.url!;
+  const signature = createHmac("sha256", cloudSecret)
+    .update([request.method, path, owner, time, ""].join("\n"))
+    .digest("hex");
+  expect(request.headers["x-clawmuse-signature"]).toBe(signature);
+  expect(request.headers.authorization).toBeUndefined();
+  cloudRequests.push({ owner, path });
+  response.writeHead(path.endsWith("/delete") && !cloudCleanupOk ? 503 : 200, {
+    "content-type": "application/json",
+  });
+  response.end(
+    JSON.stringify(
+      path.endsWith("/delete")
+        ? { deleted: cloudCleanupOk }
+        : { state: "pending_configuration", models: [], offer: null, balance: null },
+    ),
+  );
+});
+
 beforeAll(async () => {
+  await new Promise<void>((resolve) => cloudServer.listen(0, "127.0.0.1", resolve));
+  const address = cloudServer.address();
+  if (!address || typeof address === "string") throw new Error("no_cloud_address");
+  vi.stubEnv("CLAWMUSE_CLOUD_SERVICE_URL", `http://127.0.0.1:${address.port}`);
+  vi.stubEnv("CLAWMUSE_CLOUD_SERVICE_SECRET", cloudSecret);
   vi.stubEnv(
     "CLAWMUSE_RELAY_ENDPOINTS",
     "agent-relay.clawmuse.com:443, agent-relay.ppb.cn:443,agent-relay-cn.clawmuse.com:443",
@@ -72,9 +103,36 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllEnvs();
+  await new Promise<void>((resolve) => cloudServer.close(() => resolve()));
   await auth?.close();
   await runtime?.close();
   if (directory) await rm(directory, { recursive: true, force: true });
+});
+
+it("derives cloud ownership from bearer sessions and ignores client-selected identities", async () => {
+  expect((await call("/clawmuse/cloud")).status).toBe(401);
+  const first = await call("/clawmuse/devices", firstToken);
+  const cloudDirectory = z
+    .object({
+      account: z.object({ id: z.string() }),
+      cloud: z.object({ enabled: z.literal(true) }),
+    })
+    .parse(await first.json());
+  const owner = createHash("sha256")
+    .update(`clawmuse-cloud-user\0${cloudDirectory.account.id}`)
+    .digest("hex");
+  expect(
+    (
+      await call("/clawmuse/cloud/start", firstToken, {
+        userId: "other-user",
+        owner: "other-owner",
+      })
+    ).status,
+  ).toBe(200);
+  expect(cloudRequests.at(-1)).toEqual({ owner, path: "/internal/space/start" });
+  expect((await call("/clawmuse/cloud", secondToken)).status).toBe(200);
+  expect(cloudRequests.at(-1)?.owner).not.toBe(owner);
+  expect((await call("/clawmuse/cloud/delete", firstToken, {})).status).toBe(404);
 });
 
 it("registers without organization onboarding and isolates each account's encrypted directory", async () => {
@@ -330,10 +388,16 @@ it("reauthenticates deletion, waits for personal status cleanup, and revokes eve
     ).toBe(503);
     expect((await call("/clawmuse/devices", firstToken)).status).toBe(200);
     cleanupOk = true;
+    cloudCleanupOk = false;
+    expect(
+      (await call("/delete-user", firstToken, { password: "test-password-123456" })).status,
+    ).toBe(503);
+    expect((await call("/clawmuse/devices", firstToken)).status).toBe(200);
+    cloudCleanupOk = true;
     const deleted = await call("/delete-user", firstToken, { password: "test-password-123456" });
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toEqual({ success: true, message: "User deleted" });
-    expect(cleanupRequests).toHaveLength(2);
+    expect(cleanupRequests).toHaveLength(3);
     expect(cleanupRequests[0]).toEqual(cleanupRequests[1]);
     expect((await call("/clawmuse/devices", firstToken)).status).toBe(401);
     expect((await call("/clawmuse/devices", extraToken)).status).toBe(401);

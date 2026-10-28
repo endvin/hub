@@ -2,6 +2,7 @@ import { APIError } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 import { clawmuseAppOrigins, handleClawMuseAppRequest } from "./clawmuse-app-origin.js";
 import { ClawMuseDevices } from "./clawmuse-devices.js";
+import { ClawMuseCloud, clawmuseCloudConfig } from "./clawmuse-cloud.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
@@ -157,6 +158,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
     member: schema.members,
     invitation: schema.invitations,
   };
+  const cloud = new ClawMuseCloud(clawmuseCloudConfig(), (headers) => sessions.read(headers));
   const auth = betterAuth({
     baseURL: options.baseURL,
     secret: options.secret,
@@ -247,6 +249,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
             const result: unknown = await response.json();
             if (!response.ok || !z.object({ deleted: z.literal(true) }).safeParse(result).success)
               throw new Error("deletion_failed");
+            await cloud.deleteAccount(user.id);
           } catch {
             throw new APIError("SERVICE_UNAVAILABLE", {
               message: "Account deletion could not finish. Retry; your account is still active.",
@@ -329,6 +332,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
       .map((endpoint) => endpoint.trim())
       .filter(Boolean),
     (headers) => sessions.read(headers),
+    cloud.enabled,
   );
   const browserOrigin = new URL(options.baseURL).origin;
   const appOrigins = clawmuseAppOrigins(process.env["CLAWMUSE_APP_ORIGINS"]);
@@ -359,6 +363,8 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
           );
         });
     }
+    if (path === "/api/auth/clawmuse/cloud" || path.startsWith("/api/auth/clawmuse/cloud/"))
+      return cloud.handle(request);
     if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
     if (path.startsWith("/api/auth/paseo/")) {
       const rejected = rejectCrossOriginCookieMutation(

@@ -29,3 +29,29 @@ codex/endtoai-branding:
             docker build -t "${IMAGE}:${CNB_COMMIT_SHORT}" -t "${IMAGE}:latest" .
             docker push "${IMAGE}:${CNB_COMMIT_SHORT}"
             docker push "${IMAGE}:latest"
+
+# 专用触发分支只引用 main 上的提交，不保存开发改动。
+"platform-cloud/*":
+  push:
+    - name: clawmuse-cloud-accounts
+      runner:
+        cpus: 8
+      services: [docker, vscode]
+      stages:
+        - name: account quality gates
+          image: node:22-bookworm
+          timeout: 20m
+          script: |
+            set -eu
+            npm ci --no-audit --no-fund
+            npm run typecheck
+            npm run lint
+            npm run format:check
+            npx vitest run src/auth/clawmuse-devices.test.ts --bail=1
+        - name: hub image
+          timeout: 30m
+          script: |
+            set -eu
+            docker build --label "org.opencontainers.image.revision=${CNB_COMMIT}" -t "docker.cnb.cool/ppb/hub:${CNB_COMMIT_SHORT}" -t docker.cnb.cool/ppb/hub:latest .
+            docker push "docker.cnb.cool/ppb/hub:${CNB_COMMIT_SHORT}"
+            docker push docker.cnb.cool/ppb/hub:latest
