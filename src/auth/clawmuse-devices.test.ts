@@ -9,6 +9,9 @@ import { embeddedDatabaseRuntime, type DatabaseRuntime } from "../db/runtime/ind
 import { createDatabase } from "../db/pg.js";
 import { composeEntitlements } from "./entitlements.js";
 import { createAuthServer, type AuthServer } from "./server.js";
+import { ClawMuseCloud, clawmuseCloudConfig } from "./clawmuse-cloud.js";
+import { ClawMuseDevices } from "./clawmuse-devices.js";
+import type { AccountSession } from "./organization-access.js";
 
 let auth: AuthServer;
 let runtime: DatabaseRuntime;
@@ -39,27 +42,48 @@ const call = (path: string, token?: string, body?: unknown) =>
 
 const cloudSecret = "cloud-secret-123456789012345678901234567890";
 const cloudRequests: { owner: string; path: string }[] = [];
+const cloudPolicies: { mode: string; owners: string[]; expiresAt: number }[] = [];
 let cloudCleanupOk = true;
 const cloudServer = createServer((request, response) => {
-  const owner = String(request.headers["x-clawmuse-owner"]);
-  const time = String(request.headers["x-clawmuse-timestamp"]);
-  const path = request.url!;
-  const signature = createHmac("sha256", cloudSecret)
-    .update([request.method, path, owner, time, ""].join("\n"))
-    .digest("hex");
-  expect(request.headers["x-clawmuse-signature"]).toBe(signature);
-  expect(request.headers.authorization).toBeUndefined();
-  cloudRequests.push({ owner, path });
-  response.writeHead(path.endsWith("/delete") && !cloudCleanupOk ? 503 : 200, {
-    "content-type": "application/json",
+  let raw = "";
+  request.on("data", (chunk) => {
+    raw += String(chunk);
   });
-  response.end(
-    JSON.stringify(
-      path.endsWith("/delete")
-        ? { deleted: cloudCleanupOk }
-        : { state: "pending_configuration", models: [], offer: null, balance: null },
-    ),
-  );
+  request.on("end", () => {
+    const owner = String(request.headers["x-clawmuse-owner"]);
+    const time = String(request.headers["x-clawmuse-timestamp"]);
+    const path = request.url!;
+    const signature = createHmac("sha256", cloudSecret)
+      .update([request.method, path, owner, time, raw].join("\n"))
+      .digest("hex");
+    expect(request.headers["x-clawmuse-signature"]).toBe(signature);
+    expect(request.headers.authorization).toBeUndefined();
+    if (path !== "/internal/access-policy") cloudRequests.push({ owner, path });
+    response.writeHead(path.endsWith("/delete") && !cloudCleanupOk ? 503 : 200, {
+      "content-type": "application/json",
+    });
+    let result: unknown = {
+      state: "pending_configuration",
+      models: [],
+      offer: null,
+      balance: null,
+    };
+    if (path === "/internal/access-policy") {
+      const policy = z
+        .object({
+          mode: z.enum(["off", "allowlist", "all"]),
+          owners: z.array(z.string().regex(/^[a-f0-9]{64}$/)),
+          expiresAt: z.number().int(),
+        })
+        .parse(JSON.parse(raw));
+      expect(policy.expiresAt).toBeGreaterThan(Date.now());
+      expect(policy.expiresAt).toBeLessThanOrEqual(Date.now() + 120000);
+      cloudPolicies.push(policy);
+      result = { synced: true };
+    }
+    if (path.endsWith("/delete")) result = { deleted: cloudCleanupOk };
+    response.end(JSON.stringify(result));
+  });
 });
 
 beforeAll(async () => {
@@ -68,6 +92,7 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw new Error("no_cloud_address");
   vi.stubEnv("CLAWMUSE_CLOUD_SERVICE_URL", `http://127.0.0.1:${address.port}`);
   vi.stubEnv("CLAWMUSE_CLOUD_SERVICE_SECRET", cloudSecret);
+  vi.stubEnv("CLAWMUSE_CLOUD_ACCESS", "all");
   vi.stubEnv(
     "CLAWMUSE_RELAY_ENDPOINTS",
     "agent-relay.clawmuse.com:443, agent-relay.ppb.cn:443,agent-relay-cn.clawmuse.com:443",
@@ -133,6 +158,92 @@ it("derives cloud ownership from bearer sessions and ignores client-selected ide
   expect((await call("/clawmuse/cloud", secondToken)).status).toBe(200);
   expect(cloudRequests.at(-1)?.owner).not.toBe(owner);
   expect((await call("/clawmuse/cloud/delete", firstToken, {})).status).toBe(404);
+});
+
+it("defaults cloud access to off and validates rollout configuration", () => {
+  const env = {
+    CLAWMUSE_CLOUD_SERVICE_URL: "http://localhost:8788",
+    CLAWMUSE_CLOUD_SERVICE_SECRET: cloudSecret,
+  };
+  expect(clawmuseCloudConfig(env)?.access).toEqual({ mode: "off", userIds: [] });
+  expect(() => clawmuseCloudConfig({ ...env, CLAWMUSE_CLOUD_ACCESS: "al" })).toThrow();
+  expect(() =>
+    clawmuseCloudConfig({ ...env, CLAWMUSE_CLOUD_ALLOWED_USER_IDS: "someone@example.com" }),
+  ).toThrow();
+  expect(
+    clawmuseCloudConfig({
+      ...env,
+      CLAWMUSE_CLOUD_ACCESS: "allowlist",
+      CLAWMUSE_CLOUD_ALLOWED_USER_IDS: "abc, abc, def",
+    })?.access,
+  ).toEqual({ mode: "allowlist", userIds: ["abc", "def"] });
+});
+
+it("enforces the account allowlist in discovery and every cloud operation while preserving deletion", async () => {
+  const first = z
+    .object({ account: z.object({ id: z.string() }) })
+    .parse(await (await call("/clawmuse/devices", firstToken)).json());
+  const second = z
+    .object({ account: z.object({ id: z.string() }) })
+    .parse(await (await call("/clawmuse/devices", secondToken)).json());
+  const readSession = (headers: Headers): Promise<AccountSession | undefined> => {
+    const token = headers.get("authorization");
+    const id = token === `Bearer ${firstToken}` ? first.account.id : second.account.id;
+    return Promise.resolve({
+      sessionId: "test-session",
+      userId: id,
+      name: "Test",
+      email: "test@example.test",
+      activeOrganizationId: null,
+      mustChangePassword: false,
+      isInstanceOperator: false,
+    });
+  };
+  const baseConfig = clawmuseCloudConfig();
+  if (!baseConfig) throw new Error("missing_cloud_config");
+  for (const mode of ["off", "allowlist"] as const) {
+    const cloud = new ClawMuseCloud(
+      { ...baseConfig, access: { mode, userIds: [first.account.id] } },
+      readSession,
+    );
+    const devices = new ClawMuseDevices(runtime, "test-secret", [], readSession, (id) =>
+      cloud.enabledFor(id),
+    );
+    cloud.start();
+    await vi.waitFor(() => expect(cloudPolicies.at(-1)?.mode).toBe(mode));
+    expect(cloudPolicies.at(-1)?.owners).toEqual([
+      createHash("sha256").update(`clawmuse-cloud-user\0${first.account.id}`).digest("hex"),
+    ]);
+    for (const token of [firstToken, secondToken]) {
+      const allowed = mode === "allowlist" && token === firstToken;
+      const deviceResponse = await devices.handle(
+        new Request(base + "/clawmuse/devices", { headers: { authorization: `Bearer ${token}` } }),
+      );
+      expect(
+        z.object({ cloud: z.unknown().optional() }).parse(await deviceResponse.json()).cloud,
+      ).toEqual(allowed ? { enabled: true } : undefined);
+      for (const path of ["", "/start", "/pause"]) {
+        const before = cloudRequests.length;
+        const response = await cloud.handle(
+          new Request(base + "/clawmuse/cloud" + path, {
+            method: path ? "POST" : "GET",
+            headers: { authorization: `Bearer ${token}` },
+            ...(path ? { body: JSON.stringify({ userId: first.account.id }) } : {}),
+          }),
+        );
+        expect(response.status).toBe(allowed ? 200 : 403);
+        expect(cloudRequests.length - before).toBe(allowed ? 1 : 0);
+      }
+    }
+    await cloud.deleteAccount(second.account.id);
+    expect(cloudRequests.at(-1)?.path).toBe("/internal/space/delete");
+    await cloud.close();
+  }
+  const closed = new ClawMuseCloud(
+    { ...baseConfig, access: { mode: "allowlist", userIds: [] } },
+    readSession,
+  );
+  expect(await closed.enabledFor(first.account.id)).toBe(false);
 });
 
 it("registers without organization onboarding and isolates each account's encrypted directory", async () => {

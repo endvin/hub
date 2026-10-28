@@ -332,8 +332,9 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
       .map((endpoint) => endpoint.trim())
       .filter(Boolean),
     (headers) => sessions.read(headers),
-    cloud.enabled,
+    (userId) => cloud.enabledFor(userId),
   );
+  cloud.start();
   const browserOrigin = new URL(options.baseURL).origin;
   const appOrigins = clawmuseAppOrigins(process.env["CLAWMUSE_APP_ORIGINS"]);
   const route = (request: Request): Promise<Response> => {
@@ -496,7 +497,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
     apiKeys,
     cliCredentials,
     publicCredentials,
-    close: () => Promise.resolve(),
+    close: () => cloud.close(),
   };
 
   async function changePassword(request: Request): Promise<Response> {

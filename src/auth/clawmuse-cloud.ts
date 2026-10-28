@@ -1,10 +1,15 @@
 import { createHash, createHmac } from "node:crypto";
 import type { AccountSession } from "./organization-access.js";
 import { z } from "zod";
+import { reportFailure } from "../failures/index.js";
 
 export interface ClawMuseCloudConfig {
   url: string;
   secret: string;
+  access: {
+    mode: "off" | "allowlist" | "all";
+    userIds: string[];
+  };
 }
 
 export function clawmuseCloudConfig(env = process.env): ClawMuseCloudConfig | undefined {
@@ -27,11 +32,27 @@ export function clawmuseCloudConfig(env = process.env): ClawMuseCloudConfig | un
       ))
   )
     throw new Error("Invalid ClawMuse cloud service URL");
-  return { url: endpoint.origin, secret };
+  const mode = z.enum(["off", "allowlist", "all"]).parse(env["CLAWMUSE_CLOUD_ACCESS"] || "off");
+  const userIds = z
+    .array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/))
+    .max(100)
+    .parse([
+      ...new Set(
+        (env["CLAWMUSE_CLOUD_ALLOWED_USER_IDS"] ?? "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ]);
+  return { url: endpoint.origin, secret, access: { mode, userIds } };
 }
 
 /** User identity always comes from the bearer session. The browser never selects an owner. */
 export class ClawMuseCloud {
+  private policyTimer: ReturnType<typeof setInterval> | undefined;
+  private policySync: Promise<void> | undefined;
+  private policySyncedAt = 0;
+
   constructor(
     private readonly config: ClawMuseCloudConfig | undefined,
     private readonly readSession: (headers: Headers) => Promise<AccountSession | undefined>,
@@ -39,6 +60,86 @@ export class ClawMuseCloud {
 
   get enabled(): boolean {
     return this.config !== undefined;
+  }
+
+  allows(userId: string): boolean {
+    const access = this.config?.access;
+    return (
+      access?.mode === "all" || (access?.mode === "allowlist" && access.userIds.includes(userId))
+    );
+  }
+
+  async enabledFor(userId: string): Promise<boolean> {
+    if (!this.allows(userId)) return false;
+    try {
+      await this.syncPolicy();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  start(): void {
+    if (!this.config || this.policyTimer) return;
+    const refresh = () => {
+      void this.syncPolicy().catch(() => {
+        reportFailure(new Error("cloud_policy_sync_failed"), {
+          operation: "clawmuse.cloud.policy.sync",
+          component: "auth",
+        });
+      });
+    };
+    refresh();
+    this.policyTimer = setInterval(refresh, 30000);
+    this.policyTimer.unref();
+  }
+
+  async close(): Promise<void> {
+    clearInterval(this.policyTimer);
+    await this.policySync?.catch(() => undefined);
+  }
+
+  private syncPolicy(): Promise<void> {
+    if (this.policySync) return this.policySync;
+    if (!this.config || Date.now() - this.policySyncedAt < 20000) return Promise.resolve();
+    const raw = JSON.stringify({
+      mode: this.config.access.mode,
+      owners: this.config.access.userIds.map((id) =>
+        createHash("sha256").update(`clawmuse-cloud-user\0${id}`).digest("hex"),
+      ),
+      expiresAt: Date.now() + 120000,
+    });
+    this.policySync = this.signedCall("0".repeat(64), "/internal/access-policy", "POST", raw)
+      .then(async (response) => {
+        const result = z.object({ synced: z.literal(true) }).safeParse(await response.json());
+        if (!response.ok || !result.success) throw new Error("cloud_policy_sync_failed");
+        this.policySyncedAt = Date.now();
+        return;
+      })
+      .finally(() => {
+        this.policySync = undefined;
+      });
+    return this.policySync;
+  }
+
+  private signedCall(owner: string, path: string, method: string, raw = ""): Promise<Response> {
+    if (!this.config) throw new Error("cloud_unavailable");
+    const timestamp = String(Date.now());
+    const signature = createHmac("sha256", this.config.secret)
+      .update([method, path, owner, timestamp, raw].join("\n"))
+      .digest("hex");
+    return fetch(this.config.url + path, {
+      method,
+      ...(raw ? { body: raw } : {}),
+      redirect: "error",
+      signal: AbortSignal.timeout(path.endsWith("/delete") ? 75000 : 15000),
+      headers: {
+        "content-type": "application/json",
+        "x-clawmuse-owner": owner,
+        "x-clawmuse-timestamp": timestamp,
+        "x-clawmuse-signature": signature,
+      },
+    });
   }
 
   private async call(
@@ -49,20 +150,7 @@ export class ClawMuseCloud {
     const owner = createHash("sha256").update(`clawmuse-cloud-user\0${userId}`).digest("hex");
     const path = `/internal/space${operation}`;
     const method = operation ? "POST" : "GET";
-    const timestamp = String(Date.now());
-    const signature = createHmac("sha256", this.config.secret)
-      .update([method, path, owner, timestamp, ""].join("\n"))
-      .digest("hex");
-    return fetch(this.config.url + path, {
-      method,
-      redirect: "error",
-      signal: AbortSignal.timeout(operation === "/delete" ? 75000 : 15000),
-      headers: {
-        "x-clawmuse-owner": owner,
-        "x-clawmuse-timestamp": timestamp,
-        "x-clawmuse-signature": signature,
-      },
-    });
+    return this.signedCall(owner, path, method);
   }
 
   async deleteAccount(userId: string): Promise<void> {
@@ -82,6 +170,11 @@ export class ClawMuseCloud {
     if (!session) return Response.json({ error: "unauthorized" }, { status: 401 });
     if (session.mustChangePassword)
       return Response.json({ error: "password_change_required" }, { status: 403 });
+    if (!this.allows(session.userId))
+      return Response.json(
+        { error: "cloud_not_enabled" },
+        { status: 403, headers: { "cache-control": "no-store" } },
+      );
     const path = new URL(request.url).pathname;
     const operations = new Map<string, "" | "/start" | "/pause">([
       ["/api/auth/clawmuse/cloud", ""],
@@ -93,6 +186,7 @@ export class ClawMuseCloud {
     if (request.method !== (operation ? "POST" : "GET"))
       return Response.json({ error: "method_not_allowed" }, { status: 405 });
     try {
+      await this.syncPolicy();
       const response = await this.call(session.userId, operation);
       const text = await response.text();
       if (text.length > 65536) throw new Error("cloud_response_too_large");
@@ -100,7 +194,11 @@ export class ClawMuseCloud {
       if (!response.ok) {
         const parsed = z.object({ error: z.object({ type: z.string() }) }).safeParse(result);
         const code = parsed.success ? parsed.data.error.type : undefined;
-        if (code === "insufficient_credit" || code === "cloud_capacity_reached")
+        if (
+          code === "insufficient_credit" ||
+          code === "cloud_capacity_reached" ||
+          code === "cloud_not_enabled"
+        )
           return Response.json(
             { error: code },
             { status: response.status, headers: { "cache-control": "no-store" } },
