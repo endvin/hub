@@ -223,11 +223,14 @@ export function PasswordResetEntry({
         <AuthCard
           titleId="password-reset-complete-heading"
           title="Password reset"
-          description="Your new password is ready. You can use it to sign in."
+          description="Your password has been updated. Return to the ClawMuse app on your phone or computer and sign in with your new password."
         >
           <AuthActions>
-            <Button type="button" size="lg" onClick={leaveAuthCallback}>
-              Back to sign in
+            <Button asChild size="lg">
+              <a href="https://app.clawmuse.com">Open ClawMuse web</a>
+            </Button>
+            <Button type="button" size="lg" variant="outline" onClick={leaveAuthCallback}>
+              Open Hub console
             </Button>
           </AuthActions>
         </AuthCard>

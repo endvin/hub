@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AuthCard, AuthLayout } from "../components/app/auth-layout.js";
-import { AuthForm } from "../components/app/auth-form.js";
+import { AuthActions, AuthForm } from "../components/app/auth-form.js";
 import { failureMessage } from "../components/app/failure-alert.js";
 import { FormActions } from "../components/app/form-actions.js";
 import { FormDialog } from "../components/app/form-dialog.js";
@@ -375,11 +375,12 @@ export function OrganizationGate({
   );
   const signOutAccount = useCallback(() => leave.mutate({}), [leave]);
 
+  const accountOnly = account.memberships.length === 0 && !account.canCreateOrganization;
   return (
     <AuthLayout width="md">
       <AuthCard
         titleId="organization-heading"
-        title="Choose an organization"
+        title={accountOnly ? "ClawMuse account" : "Choose an organization"}
         descriptionRole="status"
         description={`Signed in as ${account.account.email}`}
       >
@@ -409,20 +410,44 @@ export function OrganizationGate({
             ))}
           </ul>
         )}
-        {account.canCreateOrganization ? null : (
+        {accountOnly && (
+          <p className="text-sm text-muted-foreground">
+            Use this account to sign in to the ClawMuse app on your phone or computer. You don't
+            need to join an organization to use the app. Access to the Hub automation console
+            requires an organization invitation.
+          </p>
+        )}
+        {!accountOnly && !account.canCreateOrganization && (
           <p className="text-sm text-muted-foreground">Ask an organization owner to invite you.</p>
         )}
-        <FormActions>
-          <Button type="button" variant="ghost" disabled={busy} onClick={signOutAccount}>
-            Sign out
-          </Button>
-          {account.canCreateOrganization ? (
-            <Button type="button" variant="outline" onClick={create} disabled={busy}>
-              <Plus aria-hidden="true" />
-              Create an organization
+        {accountOnly ? (
+          <AuthActions>
+            <Button asChild size="lg">
+              <a href="https://app.clawmuse.com">Open ClawMuse web</a>
             </Button>
-          ) : null}
-        </FormActions>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              disabled={busy}
+              onClick={signOutAccount}
+            >
+              Sign out
+            </Button>
+          </AuthActions>
+        ) : (
+          <FormActions>
+            <Button type="button" variant="ghost" disabled={busy} onClick={signOutAccount}>
+              Sign out
+            </Button>
+            {account.canCreateOrganization ? (
+              <Button type="button" variant="outline" onClick={create} disabled={busy}>
+                <Plus aria-hidden="true" />
+                Create an organization
+              </Button>
+            ) : null}
+          </FormActions>
+        )}
       </AuthCard>
       <FormDialog
         open={creating}

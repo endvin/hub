@@ -539,10 +539,24 @@ export class PaseoHub {
         email: "no-organization-owner@example.com",
         password: "no-organization-owner-password",
       });
-      await expect(page.getByRole("heading", { name: "Choose an organization" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "ClawMuse account" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Create an organization" })).toHaveCount(0);
-      await expect(page.getByText("Ask an organization owner to invite you.")).toBeVisible();
+      await expect(
+        page.getByText(/You don't need to join an organization to use the app\./u),
+      ).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open ClawMuse web" })).toHaveAttribute(
+        "href",
+        "https://app.clawmuse.com",
+      );
       await expectAccessible(page);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page.screenshot({
+          path: `${SHOTS}/clawmuse-account-${width}.png`,
+          fullPage: true,
+          animations: "disabled",
+        });
+      }
       const response = await page.evaluate(async (origin) => {
         const result = await fetch(`${origin}/api/auth/paseo/create-organization`, {
           method: "POST",
@@ -2597,7 +2611,7 @@ class HubUser {
     }
     await this.submitSignUp(account);
     await this.completeEmailVerification(account.email);
-    await expect(this.page.getByRole("heading", { name: "Choose an organization" })).toBeVisible();
+    await expect(this.page.locator("#organization-heading")).toBeVisible();
   }
 
   async expectUnsupportedSignupPlanIgnored(plan: string): Promise<void> {
@@ -2667,7 +2681,23 @@ class HubUser {
     await reset.getByLabel("Confirm new password").fill(replacementPassword);
     await reset.getByRole("button", { name: "Save new password" }).click();
     await expect(this.page.getByRole("heading", { name: "Password reset" })).toBeVisible();
-    await this.page.getByRole("button", { name: "Back to sign in" }).click();
+    await expect(
+      this.page.getByText(/Return to the ClawMuse app on your phone or computer/u),
+    ).toBeVisible();
+    await expect(this.page.getByRole("link", { name: "Open ClawMuse web" })).toHaveAttribute(
+      "href",
+      "https://app.clawmuse.com",
+    );
+    await expectAccessible(this.page);
+    for (const width of [1280, 390]) {
+      await this.page.setViewportSize({ width, height: 844 });
+      await this.page.screenshot({
+        path: `${SHOTS}/password-reset-complete-${width}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+    await this.page.getByRole("button", { name: "Open Hub console" }).click();
 
     const signIn = this.page.getByRole("form", { name: "Sign in" });
     await signIn.getByLabel("Email").fill(account.email);
