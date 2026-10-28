@@ -126,6 +126,7 @@ const RAW_PRODUCT_PATHS = new Set([
   "/api/auth/get-session",
   "/api/auth/sign-up/email",
   "/api/auth/sign-in/email",
+  "/api/auth/request-password-reset",
   "/api/auth/sign-out",
   "/api/auth/change-password",
   "/api/auth/verify-email",

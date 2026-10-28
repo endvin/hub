@@ -62,8 +62,33 @@ describe("verified account recovery boundary", () => {
         "verified@example.test",
       );
 
-      await auth.requestPasswordReset!("verified@example.test", originHeaders());
-      await auth.requestPasswordReset!("missing@example.test", originHeaders());
+      const resetBody = {
+        email: "verified@example.test",
+        redirectTo: `${ORIGIN}/?auth=password-reset`,
+      };
+      const resetRequest = await post(auth, "/api/auth/request-password-reset", resetBody);
+      assert.equal(resetRequest.status, 200);
+      assert.equal(resetRequest.headers.get("set-auth-token"), null);
+      const appOrigin = "https://app.clawmuse.com";
+      const preflight = await auth.handle(
+        new Request(`${ORIGIN}/api/auth/request-password-reset`, {
+          method: "OPTIONS",
+          headers: { origin: appOrigin },
+        }),
+      );
+      assert.equal(preflight.status, 204);
+      assert.equal(preflight.headers.get("access-control-allow-origin"), appOrigin);
+      const missingAccountReset = await auth.handle(
+        new Request(`${ORIGIN}/api/auth/request-password-reset`, {
+          method: "POST",
+          headers: { origin: appOrigin, "content-type": "application/json" },
+          body: JSON.stringify({ ...resetBody, email: "missing@example.test" }),
+        }),
+      );
+      assert.equal(missingAccountReset.status, resetRequest.status);
+      assert.deepEqual(await missingAccountReset.json(), await resetRequest.json());
+      assert.equal(missingAccountReset.headers.get("access-control-allow-origin"), appOrigin);
+      assert.equal(missingAccountReset.headers.get("set-cookie"), null);
       assert.equal(mailer.passwordResets.length, 1);
 
       const resetCallback = await auth.handle(new Request(mailer.passwordResets[0]!.url));
