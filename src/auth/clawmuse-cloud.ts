@@ -69,16 +69,6 @@ export class ClawMuseCloud {
     );
   }
 
-  async enabledFor(userId: string): Promise<boolean> {
-    if (!this.allows(userId)) return false;
-    try {
-      await this.syncPolicy();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   start(): void {
     if (!this.config || this.policyTimer) return;
     const refresh = () => {

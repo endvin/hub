@@ -332,7 +332,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
       .map((endpoint) => endpoint.trim())
       .filter(Boolean),
     (headers) => sessions.read(headers),
-    (userId) => cloud.enabledFor(userId),
+    (userId) => cloud.allows(userId),
   );
   cloud.start();
   const browserOrigin = new URL(options.baseURL).origin;

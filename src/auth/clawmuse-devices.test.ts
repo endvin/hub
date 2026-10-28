@@ -207,7 +207,7 @@ it("enforces the account allowlist in discovery and every cloud operation while 
       readSession,
     );
     const devices = new ClawMuseDevices(runtime, "test-secret", [], readSession, (id) =>
-      cloud.enabledFor(id),
+      cloud.allows(id),
     );
     cloud.start();
     await vi.waitFor(() => expect(cloudPolicies.at(-1)?.mode).toBe(mode));
@@ -243,7 +243,7 @@ it("enforces the account allowlist in discovery and every cloud operation while 
     { ...baseConfig, access: { mode: "allowlist", userIds: [] } },
     readSession,
   );
-  expect(await closed.enabledFor(first.account.id)).toBe(false);
+  expect(closed.allows(first.account.id)).toBe(false);
 });
 
 it("registers without organization onboarding and isolates each account's encrypted directory", async () => {
