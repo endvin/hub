@@ -246,7 +246,7 @@ export function PasswordResetEntry({
       <AuthCard
         titleId="password-reset-heading"
         title="Choose a new password"
-        description="Use at least 12 characters."
+        description="Use at least 8 characters."
       >
         <ErrorSummary message={message} />
         <AuthForm
@@ -261,7 +261,7 @@ export function PasswordResetEntry({
             id="reset-password-new"
             kind="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={8}
             required
           />
           <FormField
@@ -270,7 +270,7 @@ export function PasswordResetEntry({
             id="reset-password-confirm"
             kind="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={8}
             required
           />
         </AuthForm>

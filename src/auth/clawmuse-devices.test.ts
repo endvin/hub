@@ -77,6 +77,29 @@ afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+it("accepts 8–11 character passwords during sign-up", async () => {
+  for (const password of ["12345678", "12345678901"]) {
+    const email = `${password.length}-char@example.test`;
+    const response = await call("/sign-up/email", undefined, {
+      name: "Test",
+      email,
+      password,
+    });
+    expect(response.status).toBe(200);
+    const payload = z.object({ code: z.string().optional() }).parse(await response.json());
+    expect(payload.code).not.toBe("PASSWORD_TOO_SHORT");
+  }
+});
+
+it("rejects passwords shorter than 8 characters during sign-up", async () => {
+  const response = await call("/sign-up/email", undefined, {
+    name: "Test",
+    email: "seven-char@example.test",
+    password: "1234567",
+  });
+  expect(response.status).not.toBe(200);
+});
+
 it("registers without organization onboarding and isolates each account's encrypted directory", async () => {
   expect((await call("/clawmuse/devices")).status).toBe(401);
   expect((await call("/clawmuse/devices", firstToken, device)).status).toBe(200);

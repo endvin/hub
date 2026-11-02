@@ -127,7 +127,7 @@ function AccountSetupForm({
             id="operator-password"
             kind="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={8}
             required
           />
         </AuthForm>

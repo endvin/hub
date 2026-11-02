@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const REGISTRATION_MODES = ["open", "invite_only", "disabled"] as const;
 export const ORGANIZATION_CREATION_MODES = ["open", "disabled"] as const;
-export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MIN_LENGTH = 8;
 
 export type RegistrationMode = (typeof REGISTRATION_MODES)[number];
 export type OrganizationCreationMode = (typeof ORGANIZATION_CREATION_MODES)[number];
@@ -23,7 +23,7 @@ const registrationModeSchema = z.enum(REGISTRATION_MODES);
 const organizationCreationSchema = z.enum(ORGANIZATION_CREATION_MODES);
 const bootstrapPasswordSchema = z
   .string()
-  .min(PASSWORD_MIN_LENGTH, "PASEO_BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters")
+  .min(PASSWORD_MIN_LENGTH, "PASEO_BOOTSTRAP_OWNER_PASSWORD must be at least 8 characters")
   .max(128, "PASEO_BOOTSTRAP_OWNER_PASSWORD must not exceed 128 characters")
   .refine((value) => value.trim().length > 0, "PASEO_BOOTSTRAP_OWNER_PASSWORD must not be blank")
   .refine(

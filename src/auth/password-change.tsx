@@ -92,7 +92,7 @@ export function PasswordChangeEntry({
             id="new-password"
             kind="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={8}
             required
           />
           <FormField
@@ -101,7 +101,7 @@ export function PasswordChangeEntry({
             id="confirm-password"
             kind="password"
             autoComplete="new-password"
-            minLength={12}
+            minLength={8}
             required
           />
         </AuthForm>

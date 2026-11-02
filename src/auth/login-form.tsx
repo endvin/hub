@@ -58,7 +58,7 @@ export function LoginForm({
         id={`${prefix}-password`}
         kind="password"
         autoComplete={mode === "signIn" ? "current-password" : "new-password"}
-        minLength={12}
+        minLength={8}
         required
       />
     </AuthForm>
