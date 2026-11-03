@@ -1470,3 +1470,19 @@ export const executionCredentialLeases = pgTable(
   },
   (table) => [index("execution_credential_leases_execution_idx").on(table.executionId)],
 );
+
+export const clawmuseOfficialUsage = pgTable(
+  "clawmuse_official_usage",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    service: text("service").notNull(),
+    state: text("state").notNull(),
+    seconds: integer("seconds").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (table) => [index("clawmuse_official_usage_user_started").on(table.userId, table.startedAt)],
+);

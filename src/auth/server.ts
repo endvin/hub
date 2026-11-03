@@ -1,3 +1,6 @@
+import { ClawMuseOfficial } from "./clawmuse-official.js";
+import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import { APIError } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 import { clawmuseAppOrigins, handleClawMuseAppRequest } from "./clawmuse-app-origin.js";
@@ -47,6 +50,7 @@ import type { InvitationMailer } from "../invitations/index.js";
 import type { AccountMailer } from "./account-emails.js";
 
 export interface AuthServer {
+  officialUpgrade?(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<boolean>;
   handle(request: Request): Promise<Response>;
   browserAccount?(request: Request): Promise<Response>;
   signInEmail?(data: { email: string; password: string }, headers: Headers): Promise<"complete">;
@@ -334,6 +338,12 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
     (headers) => sessions.read(headers),
     (userId) => cloud.allows(userId),
   );
+  const official = new ClawMuseOfficial(
+    options.secret,
+    options.database,
+    (headers) => sessions.read(headers),
+    new URL(options.baseURL).origin,
+  );
   cloud.start();
   const browserOrigin = new URL(options.baseURL).origin;
   const appOrigins = clawmuseAppOrigins(process.env["CLAWMUSE_APP_ORIGINS"]);
@@ -364,6 +374,8 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
           );
         });
     }
+    if (path === "/api/auth/clawmuse/official" || path.startsWith("/api/auth/clawmuse/official/"))
+      return official.handle(request);
     if (path === "/api/auth/clawmuse/cloud" || path.startsWith("/api/auth/clawmuse/cloud/"))
       return cloud.handle(request);
     if (path.startsWith("/api/auth/clawmuse/")) return clawmuseDevices.handle(request);
@@ -400,6 +412,7 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
   };
 
   return {
+    officialUpgrade: (request, socket, head) => official.upgrade(request, socket, head),
     handle: (request) =>
       handleClawMuseAppRequest(request, appOrigins, browserOrigin, route) ?? route(request),
     browserAccount: (request) => {
@@ -497,7 +510,10 @@ export function createAuthServer(options: AuthServerOptions): AuthServer {
     apiKeys,
     cliCredentials,
     publicCredentials,
-    close: () => cloud.close(),
+    close: async () => {
+      official.close();
+      await cloud.close();
+    },
   };
 
   async function changePassword(request: Request): Promise<Response> {

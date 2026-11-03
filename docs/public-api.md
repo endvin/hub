@@ -89,3 +89,5 @@ at that interval. A
 self-hosted instance without `STRIPE_SECRET_KEY` 404s this route rather than serving an empty
 catalog — the billing boundary means the route is never registered on an unconfigured instance.
 See docs/billing.md.
+
+ClawMuse account-scoped speech service boundaries are described in [Official model services](official-model-services.md).

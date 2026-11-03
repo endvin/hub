@@ -163,6 +163,12 @@ async function createProductionRuntime(): Promise<ApplicationRuntime> {
       completionTokenSecret: identity.authSecret,
       close: () => resources.close(),
     });
+    const daemonUpgrade = application.hub.handleUpgrade;
+    application.hub.handleUpgrade = async (request, socket, head) => {
+      if (await auth.officialUpgrade?.(request, socket, head)) return;
+      if (daemonUpgrade) await daemonUpgrade(request, socket, head);
+      else socket.destroy();
+    };
     const activationFailures = await activateProviderApplicationsAtStartup({
       store: providerStore,
       environment: providerEnvironment,

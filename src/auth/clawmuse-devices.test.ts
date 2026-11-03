@@ -1,3 +1,5 @@
+import { WebSocket, WebSocketServer } from "ws";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import { createHash, createHmac } from "node:crypto";
 import { z } from "zod";
@@ -349,6 +351,84 @@ it("shares explicit renames and preserves them across stale device enrollment", 
     [device.offer.serverId],
   );
   expect(stored.rows[0]?.label).toBe("Office Mac");
+});
+
+it("proxies official realtime with a scoped credential and isolates free trial usage", async () => {
+  const vendor = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(vendor, "listening");
+  const address = vendor.address();
+  if (!address || typeof address === "string") throw new Error("invalid address");
+  vendor.on("connection", (socket, request) => {
+    expect(request.headers.authorization).toBe("Bearer official-test-upstream-key");
+    socket.on("message", (data, binary) => {
+      expect(binary).toBe(false);
+      socket.send(data, { binary: false });
+    });
+  });
+  vi.stubEnv("CLAWMUSE_STEP_API_KEY", "official-test-upstream-key");
+  vi.stubEnv("CLAWMUSE_REALTIME_URL", `ws://127.0.0.1:${address.port}/realtime`);
+  const proxy = createServer();
+  proxy.on("upgrade", (request, socket, head) => {
+    void auth.officialUpgrade?.(request, socket, head);
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const proxyAddress = proxy.address();
+  if (!proxyAddress || typeof proxyAddress === "string") throw new Error("invalid proxy address");
+  let socket: WebSocket | undefined;
+  try {
+    expect((await call("/clawmuse/official/session", undefined, {})).status).toBe(401);
+    const response = await call("/clawmuse/official/session", firstToken, {});
+    expect(response.status).toBe(200);
+    const ticket = z.object({ credential: z.string() }).parse(await response.json());
+    const revoked = new WebSocket(
+      `ws://127.0.0.1:${proxyAddress.port}/api/auth/clawmuse/official/realtime`,
+      { headers: { authorization: "Bearer invalid-ticket" } },
+    );
+    const rejected = new Promise<number | undefined>((resolve) =>
+      revoked.on("unexpected-response", (_request, rejectedResponse) => {
+        rejectedResponse.resume();
+        resolve(rejectedResponse.statusCode);
+      }),
+    );
+    revoked.on("error", () => {});
+    expect(await rejected).toBe(401);
+    revoked.terminate();
+    expect(ticket.credential).not.toContain(firstToken);
+    expect(ticket.credential).not.toContain("official-test-upstream-key");
+    socket = new WebSocket(
+      `ws://127.0.0.1:${proxyAddress.port}/api/auth/clawmuse/official/realtime`,
+      { headers: { authorization: `Bearer ${ticket.credential}` } },
+    );
+    await once(socket, "open");
+    const echoed = once(socket, "message");
+    socket.send(JSON.stringify({ type: "session.update" }));
+    expect(String((await echoed)[0])).toContain("session.update");
+    const closed = once(socket, "close");
+    socket.close();
+    await closed;
+    await vi.waitFor(async () => {
+      const usage = z
+        .object({
+          usedSeconds: z.number(),
+          paymentsEnabled: z.boolean(),
+          amountDue: z.number(),
+          pending: z.number(),
+        })
+        .parse(await (await call("/clawmuse/official", firstToken)).json());
+      expect(usage).toMatchObject({ paymentsEnabled: false, amountDue: 0, pending: 0 });
+      expect(usage.usedSeconds).toBeGreaterThan(0);
+    });
+    expect(await (await call("/clawmuse/official", secondToken)).json()).toMatchObject({
+      usedSeconds: 0,
+      pending: 0,
+    });
+  } finally {
+    socket?.terminate();
+    for (const client of vendor.clients) client.terminate();
+    await new Promise<void>((resolve) => vendor.close(() => resolve()));
+    await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    vi.stubEnv("CLAWMUSE_STEP_API_KEY", "");
+  }
 });
 
 it("revokes the account session on logout", async () => {
