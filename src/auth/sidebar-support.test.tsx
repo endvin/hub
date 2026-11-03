@@ -51,3 +51,51 @@ describe("the trial reminder's copy", () => {
     assert.equal(trialNoticeLabel(0), "0 days left in trial");
   });
 });
+
+describe("official plugin distribution", () => {
+  it("pins install and update to the same public commit without requiring an app release", async () => {
+    const { officialDirectorySchema, pluginCommands, OfficialPluginCard } =
+      await import("../official-plugins.js");
+    const entry = officialDirectorySchema.parse({
+      registry: { url: "https://clawmuse.com/registry" },
+      plugins: [
+        {
+          id: "clawmuse/device-preview",
+          name: "设备预览",
+          description: "主机模拟器预览",
+          artifact: {
+            kind: "git",
+            remote: "https://github.com/endvin/clawmuse-plugins.git",
+            pluginPath: "device-preview",
+            commit: "a".repeat(40),
+          },
+        },
+      ],
+    }).plugins[0];
+    assert.ok(entry);
+    const commands = pluginCommands(entry);
+    assert.match(commands.install, /--id clawmuse-device-preview/u);
+    assert.ok(commands.install.includes(`--ref ${"a".repeat(40)}`));
+    assert.ok(commands.update.includes(`--ref ${"a".repeat(40)}`));
+    const markup = renderToStaticMarkup(<OfficialPluginCard entry={entry} />);
+    assert.match(markup, /设备预览/u);
+    assert.match(markup, /clawmuse\.com\/zh\/plugins\/#device-preview/u);
+    assert.equal(
+      officialDirectorySchema.safeParse({ registry: { url: "https://other.example" }, plugins: [] })
+        .success,
+      false,
+    );
+    assert.equal(
+      officialDirectorySchema.safeParse({
+        registry: { url: "https://clawmuse.com/registry" },
+        plugins: [
+          {
+            ...entry,
+            artifact: { ...entry.artifact, remote: "https://github.com/endvin/repo;whoami" },
+          },
+        ],
+      }).success,
+      false,
+    );
+  });
+});

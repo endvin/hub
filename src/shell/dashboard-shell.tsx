@@ -27,6 +27,7 @@ import {
   SidebarInset,
   SidebarMenu,
   SidebarMenuItem,
+  SidebarMenuButton,
   SidebarProvider,
   SidebarRail,
 } from "../components/ui/sidebar.js";
@@ -287,6 +288,14 @@ function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <TrialNotice organizationSlug={organization.slug} />
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="官方插件">
+              <a href="/plugins">
+                <Blocks aria-hidden="true" />
+                <span>官方插件</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarHelp />
           <SidebarMenuItem>
             <AccountMenu
