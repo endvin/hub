@@ -136,6 +136,89 @@ afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+it("issues host-scoped controller proofs only to the owning account without revealing its signing key", async () => {
+  const accountKey = Buffer.alloc(32, 19).toString("base64url");
+  const offer = {
+    ...device.offer,
+    serverId: "srv_account_authorization",
+    requiresAuthorization: true,
+    minimumSecurityMode: "protected",
+  };
+  const enrollment = { label: "硅谷16", offer, accountKey };
+  expect((await call("/clawmuse/devices", firstToken, enrollment)).status).toBe(200);
+  const directoryResponse = await call("/clawmuse/devices", firstToken);
+  const rawDirectory = await directoryResponse.text();
+  expect(rawDirectory).not.toContain(accountKey);
+  const deviceDirectory = z
+    .object({
+      account: z.object({ id: z.string() }),
+      devices: z.array(z.object({ serverId: z.string(), accountAuthorization: z.boolean() })),
+    })
+    .parse(JSON.parse(rawDirectory));
+  expect(
+    deviceDirectory.devices.find((entry) => entry.serverId === offer.serverId)
+      ?.accountAuthorization,
+  ).toBe(true);
+  const controllerHash = createHash("sha256").update("independent-device-secret").digest("hex");
+  const request = {
+    serverId: offer.serverId,
+    daemonPublicKeyB64: offer.daemonPublicKeyB64,
+    controllerHash,
+  };
+  expect((await call("/clawmuse/devices/authorize", undefined, request)).status).toBe(401);
+  expect((await call("/clawmuse/devices/authorize", secondToken, request)).status).toBe(404);
+  expect(
+    (
+      await call("/clawmuse/devices/authorize", firstToken, {
+        ...request,
+        userId: deviceDirectory.account.id,
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (
+      await call("/clawmuse/devices/authorize", firstToken, {
+        ...request,
+        daemonPublicKeyB64: Buffer.alloc(32, 20).toString("base64"),
+      })
+    ).status,
+  ).toBe(409);
+  const result = await call("/clawmuse/devices/authorize", firstToken, request);
+  expect(result.status).toBe(200);
+  expect(result.headers.get("cache-control")).toBe("no-store");
+  const { authorization } = z.object({ authorization: z.string() }).parse(await result.json());
+  const [encoded, signature] = authorization.split(".");
+  expect(signature).toBe(
+    createHmac("sha256", Buffer.from(accountKey, "base64url")).update(encoded!).digest("base64url"),
+  );
+  const payload: unknown = JSON.parse(Buffer.from(encoded!, "base64url").toString("utf8"));
+  expect(payload).toEqual([
+    "clawmuse-account-v1",
+    offer.serverId,
+    deviceDirectory.account.id,
+    controllerHash,
+    expect.any(Number),
+  ]);
+  const expiresAt = z
+    .tuple([z.string(), z.string(), z.string(), z.string(), z.number()])
+    .parse(payload)[4];
+  expect(expiresAt).toBeGreaterThan(Date.now());
+  expect(expiresAt).toBeLessThanOrEqual(Date.now() + 90_000);
+  // Older publishers may refresh routing, but cannot downgrade a bound host or erase its key.
+  expect((await call("/clawmuse/devices", firstToken, { label: "old", offer })).status).toBe(200);
+  expect((await call("/clawmuse/devices/authorize", firstToken, request)).status).toBe(200);
+  expect(
+    (
+      await call("/clawmuse/devices", firstToken, {
+        label: "old",
+        offer: { ...offer, requiresAuthorization: false },
+      })
+    ).status,
+  ).toBe(409);
+  await call("/clawmuse/devices/remove", firstToken, { serverId: offer.serverId });
+  expect((await call("/clawmuse/devices/authorize", firstToken, request)).status).toBe(404);
+});
+
 it("derives cloud ownership from bearer sessions and ignores client-selected identities", async () => {
   expect((await call("/clawmuse/cloud")).status).toBe(401);
   const first = await call("/clawmuse/devices", firstToken);
