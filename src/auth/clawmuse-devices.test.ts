@@ -514,6 +514,61 @@ it("proxies official realtime with a scoped credential and isolates free trial u
   }
 });
 
+it("persists account visibility across sessions and enrollment without changing other accounts", async () => {
+  const entry = { ...device, offer: { ...device.offer, serverId: "srv_visibility" } };
+  expect((await call("/clawmuse/devices", firstToken, entry)).status).toBe(200);
+  const read = async (token: string) =>
+    z
+      .object({
+        devices: z.array(z.object({ serverId: z.string(), hidden: z.boolean() })),
+      })
+      .parse(await (await call("/clawmuse/devices", token)).json()).devices;
+  expect((await read(firstToken)).find((row) => row.serverId === "srv_visibility")?.hidden).toBe(
+    false,
+  );
+  const input = { serverId: "srv_visibility", hidden: true };
+  expect((await call("/clawmuse/devices/visibility", undefined, input)).status).toBe(401);
+  expect((await call("/clawmuse/devices/visibility", secondToken, input)).status).toBe(404);
+  expect(
+    (await call("/clawmuse/devices/visibility", firstToken, { ...input, hidden: "true" })).status,
+  ).toBe(400);
+  expect(
+    (await call("/clawmuse/devices/visibility", firstToken, { ...input, userId: "someone" }))
+      .status,
+  ).toBe(400);
+  const response = await auth.handle(
+    new Request(base + "/clawmuse/devices/visibility", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${firstToken}`,
+        origin: "https://app.clawmuse.com",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input),
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("access-control-allow-origin")).toBe("https://app.clawmuse.com");
+  expect((await call("/clawmuse/devices", firstToken, entry)).status).toBe(200);
+  const login = await call("/sign-in/email", undefined, {
+    email: "first@example.test",
+    password: "test-password-123456",
+  });
+  const token = login.headers.get("set-auth-token");
+  if (!token) throw new Error("missing_session");
+  expect((await read(token)).find((row) => row.serverId === "srv_visibility")?.hidden).toBe(true);
+  expect(
+    (await read(secondToken)).find((row) => row.serverId === "srv_visibility"),
+  ).toBeUndefined();
+  expect(
+    (await call("/clawmuse/devices/visibility", token, { ...input, hidden: false })).status,
+  ).toBe(200);
+  expect((await read(firstToken)).find((row) => row.serverId === "srv_visibility")?.hidden).toBe(
+    false,
+  );
+  await call("/sign-out", token, {});
+});
+
 it("revokes the account session on logout", async () => {
   expect((await call("/sign-out", secondToken, {})).status).toBe(200);
   expect((await call("/clawmuse/devices", secondToken)).status).toBe(401);

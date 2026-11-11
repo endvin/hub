@@ -61,10 +61,11 @@ export class ClawMuseDevices {
       const result = await this.database.query<{
         server_id: string;
         label: string;
+        hidden: boolean;
         offer: string;
         updated_at: Date;
       }>(
-        "SELECT server_id, label, offer, updated_at FROM clawmuse_devices WHERE user_id = $1 ORDER BY updated_at DESC",
+        "SELECT server_id, label, hidden, offer, updated_at FROM clawmuse_devices WHERE user_id = $1 ORDER BY updated_at DESC",
         [session.userId],
       );
       return this.reply({
@@ -79,6 +80,7 @@ export class ClawMuseDevices {
           return {
             serverId: row.server_id,
             label: row.label,
+            hidden: row.hidden,
             offer,
             accountAuthorization: !!accountKeyEnvelope,
             updatedAt: row.updated_at,
@@ -97,6 +99,9 @@ export class ClawMuseDevices {
     }
     if (path === "/api/auth/clawmuse/devices/authorize")
       return this.authorize(body, session.userId);
+    if (path === "/api/auth/clawmuse/devices/visibility") {
+      return this.setVisibility(body, session.userId);
+    }
     if (path === "/api/auth/clawmuse/devices/rename") {
       const input = z
         .object({
@@ -230,6 +235,24 @@ export class ClawMuseDevices {
       .update(encoded)
       .digest("base64url");
     return this.reply({ authorization: `${encoded}.${signature}` });
+  }
+
+  private async setVisibility(body: unknown, userId: string): Promise<Response> {
+    const input = z
+      .object({
+        serverId: deviceSchema.shape.offer.shape.serverId,
+        hidden: z.boolean(),
+      })
+      .strict()
+      .safeParse(body);
+    if (!input.success) return this.reply({ error: "invalid_request" }, 400);
+    const result = await this.database.query(
+      "UPDATE clawmuse_devices SET hidden = $1, updated_at = now() WHERE user_id = $2 AND server_id = $3 RETURNING server_id",
+      [input.data.hidden, userId, input.data.serverId],
+    );
+    return result.rowCount
+      ? this.reply({ ok: true })
+      : this.reply({ error: "device_not_found" }, 404);
   }
 
   private encrypt(plaintext: string, userId: string, serverId: string): string {

@@ -10,6 +10,7 @@ const ACCOUNT_PATHS = new Set([
   "/api/auth/clawmuse/devices",
   "/api/auth/clawmuse/devices/authorize",
   "/api/auth/clawmuse/devices/rename",
+  "/api/auth/clawmuse/devices/visibility",
   "/api/auth/clawmuse/devices/remove",
   "/api/auth/clawmuse/cloud",
   "/api/auth/clawmuse/cloud/start",

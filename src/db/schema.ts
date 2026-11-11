@@ -808,6 +808,7 @@ export const clawmuseDevices = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     label: text().notNull(),
+    hidden: boolean().default(false).notNull(),
     offer: text().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

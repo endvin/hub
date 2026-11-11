@@ -1,0 +1,1 @@
+ALTER TABLE "clawmuse_devices" ADD COLUMN "hidden" boolean DEFAULT false NOT NULL;
